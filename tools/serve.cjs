@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const root = path.resolve(__dirname, '..');
 const port = Number(process.env.PORT || 4173);
-const allowed = new Set(['index.html', 'startup.js', 'app.js', 'booking.js', 'i18n.js', 'sw.js', 'ui.css', 'manifest.webmanifest']);
+const allowed = new Set(['index.html', 'startup.js', 'app.js', 'booking.js', 'collaboration.js', 'i18n.js', 'sw.js', 'ui.css', 'manifest.webmanifest']);
 http.createServer((req, res) => {
   const pathname = new URL(req.url, 'http://localhost').pathname;
   // Firebase authorizes localhost for this project, but not the loopback IP.

@@ -10,6 +10,7 @@ Obryx/                         ← Wurzel des GitHub-Repositorys
 ├── ui.css                     ← Gestaltung
 ├── app.js                     ← App und Firebase-Anbindung
 ├── booking.js                 ← Terminbuchung
+├── collaboration.js           ← Gemeinsame Anfragen und Zusagen
 ├── i18n.js                    ← Sprachen
 ├── startup.js                 ← Start der App
 ├── sw.js                      ← App-Cache
@@ -24,6 +25,7 @@ Obryx/                         ← Wurzel des GitHub-Repositorys
 ├── package.json
 ├── pnpm-lock.yaml
 ├── README.md
+├── ABGESTIMMTE-LOGIK.md        ← Vereinbarte Abläufe
 └── weitere .md-Dateien        ← Anleitungen
 ```
 
@@ -45,3 +47,5 @@ Das Paket enthält keine installierten Pakete, Vorschauen, Testlaufzeiten, Daten
 ## Erst am Ende
 
 Wenn die App fertig ist, führen wir die Änderungen nach `main` zusammen und richten das Hosting ein. Die Browser-Anleitung dafür steht in [GITHUB-ANLEITUNG.md](GITHUB-ANLEITUNG.md). Für das Speichern des Codes brauchst du jetzt keinen Hosting-Zugang und keinen lokalen Webserver.
+
+Version 17 enthält auch collaboration.js. Bei der späteren Aktivierung die neuen App-Dateien und firestore.rules gemeinsam aktualisieren. Die neue Sammlung abstimmungen entsteht automatisch.

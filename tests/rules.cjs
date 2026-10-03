@@ -17,6 +17,7 @@ function functionCode(name) {
 }
 async function main() {
   const booking = await import('../booking.js');
+  const { collaboration } = await import('../collaboration.js');
   const env = await initializeTestEnvironment({ projectId: 'demo-orbyx', firestore: {
     host: '127.0.0.1', port: 8089, rules: fs.readFileSync(path.join(root, 'firestore.rules'), 'utf8')
   } });
@@ -37,7 +38,7 @@ async function main() {
     const context = vm.createContext({ ...sdk, ...booking, db: accounts[uid], structuredClone, crypto: crypto.webcrypto,
       serverTimestamp: () => sdk.Timestamp.now(),
       runTransaction: (db, fn) => sdk.runTransaction(db, tx => fn({
-        get: ref => tx.get(ref), set: (ref, data) => tx.set(ref, plain(data)), delete: ref => tx.delete(ref)
+        get: ref => tx.get(ref), set: (ref, data) => tx.set(ref, plain(data)), update: (ref, data) => tx.update(ref, plain(data)), delete: ref => tx.delete(ref)
       })),
       writeBatch: db => {
         const b = sdk.writeBatch(db); return { set: (r, d, o) => b.set(r, plain(d), o),
@@ -47,16 +48,17 @@ async function main() {
       plus: (date, n) => { const d = new Date(date); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); },
       nutzer: { uid }, meineEintraege: [], belegtFremd: [],
       darfTerminart: (k, a, person) => (k.verwalter || []).includes(person) || !k.rechte?.[person]?.terminarten || k.rechte[person].terminarten.includes(a.name),
-      anbieterVon: (k, a) => a.providerUid || k.erstellerId,
-      sitzungsId: (k, d, f) => booking.sessionKey(k.id, d, f.von, f.bis, f.art.name, f.art.providerUid || k.erstellerId),
+      anbieterVon: (k, a) => a.belegung === 'parallel' ? '' : a.providerUid || k.erstellerId,
+      sitzungsId: (k, d, f) => booking.sessionKey(k.id, d, f.von, f.bis, f.art.name, f.art.belegung === 'parallel' ? '' : f.art.providerUid || k.erstellerId),
       belegtFuerListe: () => [uid, 'teacher'], kreisVon: () => k,
       darfPlanen: k => k.verwalter.includes(uid), istBetreiber: () => false,
+      istTeamPlaner: k => !!k && (k.verwalter.includes(uid) || (k.planer || []).includes(uid)), istStern: k => k?.art === 'stern',
       wochentag: date => (new Date(date + 'T12:00:00Z').getUTCDay() + 6) % 7,
       istFeiertag: () => false, ferienRoh: () => null,
       t: key => key, confirm: () => true, melde: () => {}, alert: message => { throw Error(message); },
       zeitStatus: [], slots: []
     });
-    vm.runInContext(['minuten', 'ausMinuten', 'zeitraum', 'istSerie', 'serieAnTag', 'laeuftAnTag', 'darfBearbeiten', 'buchungsFehler', 'loescheEintrag', 'sageSerientagAb', 'slotKennung', 'zeitKonflikt', 'geplanterBatch', 'schreibeZeitSperren', 'entferneZeitSperren', 'schreibeZeitStatus', 'entferneZeitStatus', 'schreibeBuchungsFreigabe', 'reserviereTermin', 'storniereBuchung']
+    vm.runInContext(['minuten', 'ausMinuten', 'zeitraum', 'istSerie', 'serieAnTag', 'laeuftAnTag', 'darfBearbeiten', 'buchungsFehler', 'loescheEintrag', 'sageSerientagAb', 'slotKennung', 'zeitKonflikt', 'geplanterBatch', 'schreibeZeitSperren', 'entferneZeitSperren', 'schreibeZeitStatus', 'entferneZeitStatus', 'schreibeBuchungsFreigabe', 'reserviereTermin', 'storniereBuchung', 'weiseTourZu']
       .map(functionCode).join('\n'), context);
     return context;
   }
@@ -71,7 +73,39 @@ async function main() {
   }
   const window = (name, start = 600) => ({ von: start, bis: start + 60, plaetze: name === 'Theorie' ? 2 : 1,
     art: { name, providerUid: 'teacher', dauer: 60, ort: 'Fahrschule' } });
-  const check = async (name, fn) => { await reset(); await fn(); console.log('PASS:', name); };
+  const check = async (name, fn) => {
+    if (process.env.ORBYX_RULES_FILTER && !new RegExp(process.env.ORBYX_RULES_FILTER).test(name)) return;
+    await reset(); console.log('CHECK:', name); await fn(); console.log('PASS:', name);
+  };
+  const open = { ...circle, id: 'family', art: 'kreis', rechte: {} };
+  async function family() {
+    const { id, ...data } = open;
+    await env.withSecurityRulesDisabled(c => sdk.setDoc(sdk.doc(c.firestore(), 'kreise', id), data));
+  }
+  function joint(uid) {
+    const a = actor(uid, open);
+    return collaboration({ ...sdk, runTransaction: a.runTransaction, db: accounts[uid], user: () => ({ uid }), minutes: a.minuten,
+      writeLocks: a.schreibeZeitSperren, removeLocks: a.entferneZeitSperren,
+      writeStatus: a.schreibeZeitStatus, removeStatus: a.entferneZeitStatus,
+      notify: async () => {}, error: error => { throw error; } });
+  }
+  function serviceWorkflow(uid) {
+    const a = actor(uid);
+    return collaboration({ ...sdk, runTransaction: a.runTransaction, db: accounts[uid], user: () => ({ uid }),
+      notify: async () => {}, releaseService: a.schreibeBuchungsFreigabe,
+      confirmService: async (id, request) => {
+        const snap = await sdk.getDoc(sdk.doc(accounts[uid], 'eintraege', request.entryId));
+        const old = { id: snap.id, ...snap.data() }, data = request.daten;
+        await a.reserviereTermin(circle, data.datum, window(data.artName, a.minuten(data.start)), old.participantUid, false, old, data, id);
+      } });
+  }
+  async function approveShift(entry, name, start) {
+    const data = { titel: name, typ: 'termin', datum: date, start: actor('teacher').ausMinuten(start), ende: actor('teacher').ausMinuten(start + 60), artName: name, ort: '', notiz: '' };
+    await serviceWorkflow('teacher').service(entry, data);
+    const id = 'service_' + entry.id;
+    await sdk.updateDoc(sdk.doc(accounts.anna, 'abstimmungen', id), { 'zusagen.anna': 'ja', phase: 'ready' });
+    return { id, data };
+  }
   try {
     await check('personal deletion removes all busy data and makes the time bookable', async () => {
       const teacher = actor('teacher'), entry = { id: 'personal-delete', ownerId: 'teacher', titel: 'Privat', typ: 'termin',
@@ -96,6 +130,7 @@ async function main() {
       const b = teacher.geplanterBatch(); b.set(sdk.doc(accounts.teacher, 'eintraege', entry.id), entry);
       b.set(sdk.doc(accounts.teacher, 'belegt', entry.id), { ownerId: 'teacher', datum: date });
       teacher.schreibeZeitSperren(b, entry.id, entry); teacher.schreibeZeitStatus(b, entry.id, entry); await b.commit();
+      console.log('Series reservations created');
       await teacher.sageSerientagAb(entry, date);
       const status = (await sdk.getDoc(sdk.doc(accounts.teacher, 'zeitstatus', entry.id + '_teacher'))).data();
       assert.deepEqual(status.serie.ausnahmen, [date]);
@@ -166,10 +201,13 @@ async function main() {
     });
     await check('a planner can move a booking and change its type atomically', async () => {
       const teacher = actor('teacher'), e = await teacher.reserviereTermin(circle, date, window('Automatik'), 'anna', true);
-      const moved = await teacher.reserviereTermin(circle, date, window('Automatik', 660), 'anna', true, e);
+      await assert.rejects(teacher.reserviereTermin(circle, date, window('Automatik', 660), 'anna', true, e), /consent-required/);
+      const first = await approveShift(e, 'Automatik', 660);
+      const moved = await teacher.reserviereTermin(circle, date, window('Automatik', 660), 'anna', true, e, first.data, first.id);
       await env.withSecurityRulesDisabled(async c => assert.equal((await sdk.getDoc(sdk.doc(c.firestore(), 'eintraege', e.id))).exists(), false));
       assert.equal(moved.participantUid, 'anna');
-      const changed = await teacher.reserviereTermin(circle, date, window('Theorie', 660), 'anna', true, moved);
+      const second = await approveShift(moved, 'Theorie', 660);
+      const changed = await teacher.reserviereTermin(circle, date, window('Theorie', 660), 'anna', true, moved, second.data, second.id);
       await env.withSecurityRulesDisabled(async c => assert.equal((await sdk.getDoc(sdk.doc(c.firestore(), 'eintraege', moved.id))).exists(), false));
       assert.equal(changed.artName, 'Theorie');
     });
@@ -179,7 +217,8 @@ async function main() {
         wiederholung: 'einmal', kreisIds: [], teilnehmer: ['teacher'] }, b = teacher.geplanterBatch();
       b.set(sdk.doc(accounts.teacher, 'eintraege', 'private'), privateEntry);
       teacher.schreibeZeitSperren(b, 'private', privateEntry); await b.commit();
-      await assert.rejects(teacher.reserviereTermin(circle, date, window('Automatik', 660), 'anna', true, e));
+      const approval = await approveShift(e, 'Automatik', 660);
+      await assert.rejects(teacher.reserviereTermin(circle, date, window('Automatik', 660), 'anna', true, e, approval.data, approval.id));
       assert.equal((await sdk.getDoc(sdk.doc(accounts.teacher, 'eintraege', e.id))).exists(), true);
       assert.equal((await sdk.getDoc(sdk.doc(accounts.teacher, 'slots', e.slotId))).exists(), true);
       assert.deepEqual((await sdk.getDoc(sdk.doc(accounts.teacher, 'sitzungen', e.sessionId))).data().seats, { [e.id]: 'anna' });
@@ -229,15 +268,138 @@ async function main() {
       await assertSucceeds(b.commit());
       await assertFails(sdk.updateDoc(sdk.doc(accounts.anna, 'kreise', 'new'), { verwalter: ['teacher', 'anna'] }));
     });
-    await check('open orbit members can edit its plan; service readers cannot', async () => {
+    await check('uninvolved open orbit members and service readers cannot edit private details', async () => {
       await env.withSecurityRulesDisabled(async c => {
         const db = c.firestore();
         await sdk.setDoc(sdk.doc(db, 'kreise', 'open'), { ...circle, art: 'kreis' });
         await sdk.setDoc(sdk.doc(db, 'eintraege', 'common'), { ownerId: 'teacher', typ: 'termin', kreisIds: ['open'] });
         await sdk.setDoc(sdk.doc(db, 'eintraege', 'service'), { ownerId: 'teacher', typ: 'termin', kreisIds: ['team'] });
       });
-      await assertSucceeds(sdk.updateDoc(sdk.doc(accounts.anna, 'eintraege', 'common'), { titel: 'Gemeinsam geplant' }));
+      await assertFails(sdk.updateDoc(sdk.doc(accounts.anna, 'eintraege', 'common'), { titel: 'Gemeinsam geplant' }));
       await assertFails(sdk.updateDoc(sdk.doc(accounts.anna, 'eintraege', 'service'), { titel: 'Fremder Termin' }));
+    });
+    await check('shared requests reserve only after all yes; overlapping shift replaces the old reservation', async () => {
+      await family();
+      const teacher = joint('teacher'), anna = joint('anna');
+      const data = { titel: 'Familie', typ: 'termin', datum: date, start: '10:00', ende: '12:00' };
+      const id = await teacher.create(open, data, ['teacher', 'anna']);
+      await env.withSecurityRulesDisabled(async c => assert.equal((await sdk.getDocs(sdk.collection(c.firestore(), 'zeitsperren'))).size, 0));
+      await assertFails(sdk.updateDoc(sdk.doc(accounts.teacher, 'abstimmungen', id), { 'zusagen.anna': 'ja', phase: 'confirmed', basis: data }));
+      await anna.respond(id, 'ja', 1);
+      assert.equal((await sdk.getDoc(sdk.doc(accounts.anna, 'eintraege', id + '_anna'))).data().start, '10:00');
+      await assertFails(sdk.deleteDoc(sdk.doc(accounts.teacher, 'eintraege', id + '_anna')));
+      await assertFails(sdk.deleteDoc(sdk.doc(accounts.teacher, 'zeitsperren', 'anna_' + date + '_600')));
+      await assertFails(sdk.getDoc(sdk.doc(accounts.ben, 'abstimmungen', id)));
+      await assertFails(sdk.getDoc(sdk.doc(accounts.ben, 'eintraege', id + '_anna')));
+      await teacher.shift(id, { ...data, start: '11:00', ende: '13:00' });
+      assert.equal((await sdk.getDoc(sdk.doc(accounts.anna, 'eintraege', id + '_anna'))).data().start, '10:00');
+      await anna.respond(id, 'ja', 2);
+      assert.equal((await sdk.getDoc(sdk.doc(accounts.anna, 'eintraege', id + '_anna'))).data().start, '11:00');
+      await teacher.withdraw(id);
+      await env.withSecurityRulesDisabled(async c => assert.equal((await sdk.getDoc(sdk.doc(c.firestore(), 'eintraege', id + '_teacher'))).exists(), false));
+      assert.equal((await sdk.getDoc(sdk.doc(accounts.anna, 'eintraege', id + '_anna'))).exists(), true);
+      await anna.withdraw(id);
+      await env.withSecurityRulesDisabled(async c => {
+        assert.equal((await sdk.getDocs(sdk.collection(c.firestore(), 'eintraege'))).size, 0);
+        assert.equal((await sdk.getDocs(sdk.collection(c.firestore(), 'zeitsperren'))).size, 0);
+      });
+    });
+    await check('declining a shift removes the old reservation too, without removing another participant', async () => {
+      await family(); const teacher = joint('teacher'), anna = joint('anna');
+      const data = { titel: 'Familie', typ: 'termin', datum: date, start: '10:00', ende: '11:00' };
+      const id = await teacher.create(open, data, ['teacher', 'anna']); await anna.respond(id, 'ja', 1);
+      await teacher.shift(id, { ...data, start: '11:00', ende: '12:00' }); await anna.respond(id, 'nein', 2);
+      await env.withSecurityRulesDisabled(async c => assert.equal((await sdk.getDoc(sdk.doc(c.firestore(), 'eintraege', id + '_anna'))).exists(), false));
+      assert.equal((await sdk.getDoc(sdk.doc(accounts.teacher, 'eintraege', id + '_teacher'))).data().start, '11:00');
+      await env.withSecurityRulesDisabled(async c => {
+        const locks = await sdk.getDocs(sdk.collection(c.firestore(), 'zeitsperren'));
+        assert.equal(locks.docs.some(d => d.data().uid === 'anna'), false);
+      });
+    });
+    await check('a private conflict at final consent rolls back every copy and keeps the pending request', async () => {
+      await family(); const teacher = joint('teacher'), anna = joint('anna');
+      const data = { titel: 'Familie', typ: 'termin', datum: date, start: '10:00', ende: '11:00' };
+      const id = await teacher.create(open, data, ['teacher', 'anna']);
+      await actor('anna').reserviereTermin(circle, date, window('Automatik'), 'anna');
+      await assert.rejects(anna.respond(id, 'ja', 1));
+      await env.withSecurityRulesDisabled(async c => assert.equal((await sdk.getDoc(sdk.doc(c.firestore(), 'eintraege', id + '_anna'))).exists(), false));
+      assert.equal((await sdk.getDoc(sdk.doc(accounts.teacher, 'abstimmungen', id))).data().phase, 'pending');
+    });
+    await check('new accounts cannot grant themselves access and the app administrator cannot read private details', async () => {
+      const newbie = env.authenticatedContext('newbie', { email: 'new@example.com', email_verified: true }).firestore();
+      await assertSucceeds(sdk.setDoc(sdk.doc(newbie, 'users', 'newbie'), { name: 'Neu', betaVersion: 17 }));
+      await assertFails(sdk.updateDoc(sdk.doc(newbie, 'users', 'newbie'), { vollzugriff: true }));
+      await assertFails(sdk.setDoc(sdk.doc(newbie, 'kreise', 'mine'), { name: 'Meins', erstellerId: 'newbie', mitglieder: ['newbie'], verwalter: ['newbie'] }));
+      await env.withSecurityRulesDisabled(c => sdk.setDoc(sdk.doc(c.firestore(), 'eintraege', 'private'), { ownerId: 'anna', titel: 'Geheim', kreisIds: [] }));
+      const admin = env.authenticatedContext('root', { email: 'rabea.jabban.mrj@gmail.com', email_verified: true }).firestore();
+      await assertFails(sdk.getDoc(sdk.doc(admin, 'eintraege', 'private')));
+    });
+    await check('an initial declined participant can be removed and the remaining yes votes reserve an untimed task', async () => {
+      await family(); const teacher = joint('teacher'), anna = joint('anna'), ben = joint('ben');
+      const data = { titel: 'Aufgabe', typ: 'task', datum: date, start: '', ende: '', frist: '2026-10-15' };
+      const id = await teacher.create(open, data, ['teacher', 'anna', 'ben']);
+      await anna.respond(id, 'ja', 1); await ben.respond(id, 'nein', 1);
+      await teacher.removeDeclined(id, 'ben');
+      const task = (await sdk.getDoc(sdk.doc(accounts.anna, 'eintraege', id + '_anna'))).data();
+      assert.equal(task.typ, 'task'); assert.equal(task.frist, '2026-10-15');
+      await env.withSecurityRulesDisabled(async c => assert.equal((await sdk.getDocs(sdk.collection(c.firestore(), 'zeitsperren'))).size, 0));
+      await assertSucceeds(sdk.updateDoc(sdk.doc(accounts.anna, 'eintraege', id + '_anna'), { status: 'fertig' }));
+      assert.equal((await sdk.getDoc(sdk.doc(accounts.teacher, 'eintraege', id + '_teacher'))).data().status, 'offen');
+    });
+    await check('service shifts wait for customer approval and cancellation frees only this customer seat', async () => {
+      const e = await actor('teacher').reserviereTermin(circle, date, window('Theorie'), 'anna', true);
+      const other = await actor('teacher').reserviereTermin(circle, date, window('Theorie'), 'ben', true);
+      await serviceWorkflow('teacher').service(e, { titel: 'Theorie', typ: 'termin', datum: date, start: '11:00', ende: '12:00', artName: 'Theorie', ort: '', notiz: '' });
+      assert.equal((await sdk.getDoc(sdk.doc(accounts.anna, 'eintraege', e.id))).data().start, '10:00');
+      await serviceWorkflow('anna').respond('service_' + e.id, 'nein', 1);
+      assert.equal((await sdk.getDoc(sdk.doc(accounts.ben, 'eintraege', other.id))).exists(), true);
+      await env.withSecurityRulesDisabled(async c => assert.equal((await sdk.getDoc(sdk.doc(c.firestore(), 'eintraege', e.id))).exists(), false));
+    });
+    await check('a customer confirms a service shift and the atomic move retains their original UID', async () => {
+      const e = await actor('teacher').reserviereTermin(circle, date, window('Automatik'), 'anna', true);
+      await serviceWorkflow('teacher').service(e, { titel: 'Automatik', typ: 'termin', datum: date, start: '11:00', ende: '12:00', artName: 'Automatik', ort: '', notiz: '' });
+      await serviceWorkflow('anna').respond('service_' + e.id, 'ja', 1);
+      const req = (await sdk.getDoc(sdk.doc(accounts.anna, 'abstimmungen', 'service_' + e.id))).data();
+      assert.equal(req.phase, 'confirmed');
+      const moved = (await sdk.getDoc(sdk.doc(accounts.anna, 'eintraege', req.newEntryId))).data();
+      assert.equal(moved.start, '11:00'); assert.equal(moved.participantUid, 'anna');
+    });
+    await check('parallel tours reserve capacity and the customer, without reserving the owner calendar', async () => {
+      const k = { ...circle, rechte: {}, angebote: { Tour: { plaetze: 2, dauer: 60, providerUid: '' } } };
+      await env.withSecurityRulesDisabled(c => sdk.updateDoc(sdk.doc(c.firestore(), 'kreise', 'team'), { angebote: k.angebote, rechte: {} }));
+      const f = { von: 600, bis: 660, plaetze: 2, art: { name: 'Tour', dauer: 60, belegung: 'parallel' } };
+      const anna = await actor('teacher', k).reserviereTermin(k, date, f, 'anna', true);
+      const ben = await actor('teacher', k).reserviereTermin(k, date, f, 'ben', true);
+      assert.equal(anna.providerUid, ''); assert.deepEqual(Array.from(ben.teilnehmer), ['ben']);
+      await env.withSecurityRulesDisabled(async c => {
+        const locks = await sdk.getDocs(sdk.collection(c.firestore(), 'zeitsperren'));
+        assert.equal(locks.docs.some(d => d.data().uid === 'teacher'), false);
+      });
+      await actor('teacher', k).weiseTourZu(anna, 'teacher');
+      await assert.rejects(actor('teacher', k).weiseTourZu(ben, 'teacher'));
+      assert.equal((await sdk.getDoc(sdk.doc(accounts.teacher, 'eintraege', anna.id))).data().executorUid, 'teacher');
+      await actor('anna', k).storniereBuchung({ ...anna, executorUid: 'teacher', teilnehmer: ['anna', 'teacher'] });
+      await env.withSecurityRulesDisabled(async c => {
+        const locks = await sdk.getDocs(sdk.collection(c.firestore(), 'zeitsperren'));
+        assert.equal(locks.docs.some(d => d.data().uid === 'teacher'), false);
+      });
+    });
+    await check('standalone app invitations preserve existing access and cannot override an administrator ban', async () => {
+      const admin = env.authenticatedContext('root', { email: 'rabea.jabban.mrj@gmail.com', email_verified: true }).firestore();
+      await assertSucceeds(sdk.setDoc(sdk.doc(admin, 'einladungen', 'app_anna@example.com'), { email: 'anna@example.com', vonUid: 'root', appEinladung: true, vollzugriff: true, darfKreiseAnlegen: true }));
+      await assertSucceeds(sdk.updateDoc(sdk.doc(accounts.anna, 'users', 'anna'), { vollzugriff: true, darfKreiseAnlegen: true, zugangEinladung: 'app_anna@example.com' }));
+      await sdk.updateDoc(sdk.doc(admin, 'users', 'anna'), { vollzugriff: false, 'adminSperren.kalender': true });
+      await assertFails(sdk.updateDoc(sdk.doc(accounts.anna, 'users', 'anna'), { vollzugriff: true, zugangEinladung: 'app_anna@example.com' }));
+      await assertSucceeds(sdk.updateDoc(sdk.doc(accounts.anna, 'users', 'anna'), { vollzugriff: false, darfKreiseAnlegen: true, zugangEinladung: 'app_anna@example.com' }));
+    });
+    await check('timed tasks reserve participants only after approval and participant restrictions are enforced on consent', async () => {
+      await family();
+      const id = await joint('teacher').create(open, { titel: 'Arbeit', typ: 'task', datum: date, start: '10:00', ende: '11:00' }, ['teacher', 'anna']);
+      await joint('anna').respond(id, 'ja', 1);
+      await env.withSecurityRulesDisabled(async c => assert.equal((await sdk.getDocs(sdk.collection(c.firestore(), 'zeitsperren'))).size, 24));
+      await sdk.updateDoc(sdk.doc(accounts.teacher, 'kreise', 'family'), { 'rechte.anna': { planenMit: 'verwalter' } });
+      const next = await joint('teacher').create(open, { titel: 'Andere Aufgabe', typ: 'task', datum: date, start: '', ende: '' }, ['teacher', 'anna', 'ben']);
+      await assert.rejects(joint('anna').respond(next, 'ja', 1));
     });
   } finally { await env.cleanup(); }
 }

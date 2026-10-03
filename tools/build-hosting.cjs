@@ -4,7 +4,7 @@ const path = require('node:path');
 const root = path.resolve(__dirname, '..');
 const output = path.resolve(root, 'public');
 const files = [
-  'index.html', 'ui.css', 'app.js', 'booking.js', 'i18n.js',
+  'index.html', 'ui.css', 'app.js', 'booking.js', 'collaboration.js', 'i18n.js',
   'startup.js', 'sw.js', 'manifest.webmanifest'
 ];
 const icons = fs.readdirSync(path.join(root, 'icons'), { withFileTypes: true })

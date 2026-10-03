@@ -8,12 +8,12 @@ service cloud.firestore {
         || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('aktiv', true) != false);
     }
     function vollzugriff() {
-      return istBetreiber() || (angemeldet() && (!exists(/databases/$(database)/documents/users/$(meineUid()))
-        || get(/databases/$(database)/documents/users/$(meineUid())).data.get('vollzugriff', true) != false));
+      return istBetreiber() || (angemeldet() && exists(/databases/$(database)/documents/users/$(meineUid()))
+        && get(/databases/$(database)/documents/users/$(meineUid())).data.get('vollzugriff', get(/databases/$(database)/documents/users/$(meineUid())).data.get('betaVersion', 0) != 17) == true);
     }
     function darfKreiseAnlegen() {
-      return istBetreiber() || (vollzugriff() && (!exists(/databases/$(database)/documents/users/$(meineUid()))
-        || get(/databases/$(database)/documents/users/$(meineUid())).data.get('darfKreiseAnlegen', true) != false));
+      return istBetreiber() || (angemeldet() && exists(/databases/$(database)/documents/users/$(meineUid()))
+        && get(/databases/$(database)/documents/users/$(meineUid())).data.get('darfKreiseAnlegen', false) == true);
     }
     function meineUid()    { return request.auth.uid; }
     function meineMail()   { return request.auth.token.email.lower(); }
@@ -49,29 +49,34 @@ service cloud.firestore {
     }
 
     function binPlaner(id) {
-      return binVerwalter(id) || (binMitglied(id) && (
-        meineUid() in kreis(id).get('planer', [])
-        || (kreis(id).get('art', 'kreis') != 'stern'
-          && kreis(id).get('rechte', {}).get(meineUid(), {}).get('planen', true) == true)));
+      let k = kreis(id);
+      return meineUid() in k.get('mitglieder', []) && (meineUid() in k.get('verwalter', [])
+        || meineUid() in k.get('planer', []) || (k.get('art', 'kreis') != 'stern'
+        && k.get('rechte', {}).get(meineUid(), {}).get('planen', true)));
     }
     function darfEinladen(id) {
       return binVerwalter(id) || (binMitglied(id)
         && kreis(id).get('rechte', {}).get(meineUid(), {}).get('einladen', false) == true);
     }
     function darfArt(id, name) {
-      return binPlaner(id) || (binMitglied(id)
-        && (kreis(id).get('rechte', {}).get(meineUid(), {}).get('terminarten', null) == null
-          || name in kreis(id).rechte[meineUid()].terminarten));
+      let k = kreis(id);
+      let allowed = k.get('rechte', {}).get(meineUid(), {}).get('terminarten', null);
+      return meineUid() in k.mitglieder && (meineUid() in k.get('verwalter', []) || meineUid() in k.get('planer', []) || allowed == null || name in allowed);
     }
     function meineBuchung(e) {
       return e.get('slotId', '') != '' && (e.get('participantUid', '') == meineUid()
         || (e.get('zugewiesen', []).size() == 1 && meineUid() in e.zugewiesen));
     }
     function verwalteEintrag(e) {
-      return istBetreiber() || e.get('ownerId', '') == meineUid() || planEintrag(e);
+      return e.get('ownerId', '') == meineUid() || planEintrag(e) || workflowVerwalten(e);
     }
     function planEintrag(daten) {
-      return daten.get('kreisIds', []).size() == 1 && binPlaner(daten.kreisIds[0]);
+      return daten.get('kreisIds', []).size() == 1 && servicePlaner(daten.kreisIds[0]);
+    }
+    function servicePlaner(id) {
+      let k = kreis(id);
+      return k.get('art', 'kreis') == 'stern' && meineUid() in k.mitglieder
+        && (meineUid() in k.get('verwalter', []) || meineUid() in k.get('planer', []));
     }
     function nurEigeneListe(feld) {
       let alt = resource.data.get(feld, []).toSet();
@@ -99,12 +104,34 @@ service cloud.firestore {
     function einladungsZugang() {
       let id = request.resource.data.get('zugangEinladung', '');
       let ein = get(/databases/$(database)/documents/einladungen/$(id)).data;
+      let sperren = resource.data.get('adminSperren', {});
       return request.auth.token.email_verified == true && ein.email == meineMail()
-        && ein.get('vollzugriff', null) is bool
-        && request.resource.data.vollzugriff == ein.vollzugriff
-        && request.resource.data.darfKreiseAnlegen == (ein.get('darfKreiseAnlegen', false) == true && ein.vollzugriff)
-        && meineUid() in getAfter(/databases/$(database)/documents/kreise/$(ein.kreisId)).data.mitglieder;
+        && request.resource.data.vollzugriff == (resource.data.get('vollzugriff', resource.data.get('betaVersion', 0) != 17) || (ein.get('vollzugriff', false) && !sperren.get('kalender', false)))
+        && request.resource.data.darfKreiseAnlegen == (resource.data.get('darfKreiseAnlegen', false) || (ein.get('darfKreiseAnlegen', false) && !sperren.get('orbits', false)))
+        && (ein.get('appEinladung', false) || meineUid() in getAfter(/databases/$(database)/documents/kreise/$(ein.kreisId)).data.mitglieder);
     }
+    function workflow(id) { return getAfter(/databases/$(database)/documents/abstimmungen/$(id)).data; }
+    function workflowVerwalten(e) {
+      let id = e.get('workflowId', '');
+      return id != '' && exists(/databases/$(database)/documents/abstimmungen/$(id))
+        && meineUid() in get(/databases/$(database)/documents/abstimmungen/$(id)).data.teilnehmer
+        && get(/databases/$(database)/documents/abstimmungen/$(id)).data.phase in ['pending', 'ready']
+        && workflow(id).phase == 'confirmed';
+    }
+    function workflowKopie(e, id) {
+      let w = workflow(e.get('workflowId', ''));
+      return w.kind == 'open' && w.phase == 'confirmed' && e.ownerId in w.teilnehmer
+        && get(/databases/$(database)/documents/abstimmungen/$(e.workflowId)).data.phase in ['pending', 'ready']
+        && (meineUid() in w.teilnehmer || meineUid() in get(/databases/$(database)/documents/abstimmungen/$(e.workflowId)).data.teilnehmer)
+        && id == e.workflowId + '_' + e.ownerId && e.kreisIds == [w.kreisId]
+        && e.teilnehmer == [e.ownerId] && e.sichtbarFuer == [e.ownerId]
+        && e.zugewiesen == [] && e.zusagen == {} && e.wiederholung == 'einmal'
+        && e.erstellerId == w.erstellerId
+        && e.status == (w.daten.typ == 'task' ? 'offen' : '')
+        && e.von == timeMinute(w.daten.get('start', '')) && e.bis == timeMinute(w.daten.get('ende', ''))
+        && e.diff(w.daten).affectedKeys().hasOnly(['ownerId', 'workflowId', 'erstellerId', 'kreisIds', 'zugewiesen', 'zusagen', 'teilnehmer', 'sichtbarFuer', 'status', 'wiederholung', 'sperrenVersion', 'zeitStatusVersion', 'von', 'bis']);
+    }
+    function timeMinute(time) { return time == '' ? 0 : int(time.split(':')[0]) * 60 + int(time.split(':')[1]); }
 
     // Ein fehlendes Feld bricht die ganze Regelpruefung ab, und dann
     // schlaegt die KOMPLETTE Abfrage fehl, nicht nur ein Dokument.
@@ -121,10 +148,11 @@ service cloud.firestore {
       // einfach wieder freischalten.
       allow create: if angemeldet() && meineUid() == userId
                     && !request.resource.data.keys()
-                        .hasAny(['aktiv', 'darfKreiseAnlegen', 'vollzugriff', 'zugangEinladung']);
+                        .hasAny(['aktiv', 'darfKreiseAnlegen', 'vollzugriff', 'zugangEinladung', 'adminSperren'])
+                    && request.resource.data.get('betaVersion', 0) == 17;
       allow update: if angemeldet() && meineUid() == userId
                     && !request.resource.data.diff(resource.data)
-                        .affectedKeys().hasAny(['aktiv', 'darfKreiseAnlegen', 'vollzugriff', 'zugangEinladung']);
+                        .affectedKeys().hasAny(['aktiv', 'darfKreiseAnlegen', 'vollzugriff', 'zugangEinladung', 'adminSperren', 'betaVersion']);
 
       allow update: if angemeldet() && meineUid() == userId
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['vollzugriff', 'darfKreiseAnlegen', 'zugangEinladung'])
@@ -133,7 +161,7 @@ service cloud.firestore {
       // Nur der Betreiber sperrt und gibt frei, und auch nur das.
       allow update: if istBetreiber()
                     && request.resource.data.diff(resource.data)
-                       .affectedKeys().hasOnly(['aktiv', 'darfKreiseAnlegen', 'vollzugriff', 'zugangEinladung']);
+                       .affectedKeys().hasOnly(['aktiv', 'darfKreiseAnlegen', 'vollzugriff', 'zugangEinladung', 'adminSperren']);
     }
 
     // ================= PRIVATES PROFIL =================
@@ -225,11 +253,15 @@ service cloud.firestore {
     match /einladungen/{einladungId} {
       allow read: if angemeldet() && (
                     resource.data.get('email', '') == meineMail()
-                    || darfEinladen(resource.data.get('kreisId', ''))
+                    || istBetreiber() || darfEinladen(resource.data.get('kreisId', ''))
                   );
 
+      allow create, update: if istBetreiber() && request.resource.data.get('appEinladung', false)
+        && request.resource.data.vonUid == meineUid() && request.resource.data.email == request.resource.data.email.lower()
+        && einladungId == 'app_' + request.resource.data.email;
       allow create, update: if angemeldet()
-                    && (!request.resource.data.keys().hasAny(['vollzugriff', 'darfKreiseAnlegen']) || istBetreiber())
+                    && (!request.resource.data.keys().hasAny(['vollzugriff', 'darfKreiseAnlegen']) || binVerwalter(request.resource.data.kreisId))
+                    && request.resource.data.get('appEinladung', false) == false
                     && request.resource.data.vonUid == meineUid()
                     && darfEinladen(request.resource.data.kreisId)
                     && (binVerwalter(request.resource.data.kreisId) || (
@@ -242,7 +274,7 @@ service cloud.firestore {
 
       allow delete: if angemeldet() && (
                       resource.data.get('email', '') == meineMail()
-                      || !kreisDa(resource.data.get('kreisId', ''))
+                      || istBetreiber() || (!resource.data.get('appEinladung', false) && !kreisDa(resource.data.get('kreisId', '')))
                       || darfEinladen(resource.data.get('kreisId', ''))
                     );
     }
@@ -270,7 +302,7 @@ service cloud.firestore {
                                + request.resource.data.start + '_'
                                + string(request.resource.data.platz);
 
-      allow update: if angemeldet() && binPlaner(resource.data.kreisId)
+      allow update: if angemeldet() && (binPlaner(resource.data.kreisId) || meineBuchung(get(/databases/$(database)/documents/eintraege/$(resource.data.entryId)).data))
         && resource.data.get('entryId', '') != ''
         && !existsAfter(/databases/$(database)/documents/eintraege/$(resource.data.entryId))
         && request.resource.data.uid == meineUid() && request.resource.data.kreisId == resource.data.kreisId
@@ -295,27 +327,45 @@ service cloud.firestore {
         return s.seats[eintragId] == e.participantUid && s.providerUid == e.providerUid
           && s.datum == e.datum && s.von == e.von && s.bis == e.bis && e.dauer == e.bis - e.von
           && e.kreisIds == [s.kreisId] && e.artName == s.artName
-          && e.teilnehmer.toSet() == [s.providerUid, e.participantUid].toSet()
+          && e.teilnehmer.toSet() == (s.providerUid == '' ? (e.get('executorUid', '') == '' ? [e.participantUid] : [e.participantUid, e.executorUid]) : [s.providerUid, e.participantUid]).toSet()
+          && (e.get('executorUid', '') == '' || (s.providerUid == '' && e.executorUid in kreis(s.kreisId).mitglieder
+            && (planEintrag(e) || approvedExecutor(e, eintragId))
+            && zeitGesperrt(e.executorUid, e, e.von - e.von % 5) && zeitGesperrt(e.executorUid, e, e.bis - 1 - (e.bis - 1) % 5)))
           && e.participantUid in kreis(s.kreisId).mitglieder
           && (e.participantUid == meineUid() || binPlaner(s.kreisId))
-          && zeitGesperrt(e.providerUid, e, e.von - e.von % 5)
-          && zeitGesperrt(e.providerUid, e, e.bis - 1 - (e.bis - 1) % 5)
+          && (e.providerUid == '' || (zeitGesperrt(e.providerUid, e, e.von - e.von % 5)
+          && zeitGesperrt(e.providerUid, e, e.bis - 1 - (e.bis - 1) % 5)))
           && zeitGesperrt(e.participantUid, e, e.von - e.von % 5)
           && zeitGesperrt(e.participantUid, e, e.bis - 1 - (e.bis - 1) % 5)
           && existsAfter(/databases/$(database)/documents/slots/$(e.slotId));
       }
-      allow read: if angemeldet() && (istBetreiber() || planEintrag(resource.data) || resource.data.get('ownerId', '') == meineUid()
-        || meineUid() in resource.data.get('sichtbarFuer', []));
-      allow create: if angemeldet() && request.resource.data.ownerId == meineUid()
+      function approvedExecutor(e, id) {
+        let w = workflow(e.get('approvalId', ''));
+        return w.kind == 'service' && w.phase == 'confirmed' && w.newEntryId == id
+          && w.daten.get('executorUid', '') == e.executorUid && w.daten.datum == e.datum
+          && w.daten.start == e.start && w.daten.ende == e.ende && meineUid() in w.teilnehmer;
+      }
+      allow read: if angemeldet() && (planEintrag(resource.data) || resource.data.get('ownerId', '') == meineUid()
+        || meineUid() in resource.data.get('teilnehmer', []) || meineUid() in resource.data.get('zugewiesen', []));
+      allow create, update: if angemeldet() && request.resource.data.get('workflowId', '') != '' && workflowKopie(request.resource.data, eintragId);
+      allow create: if angemeldet() && request.resource.data.get('workflowId', '') == '' && request.resource.data.ownerId == meineUid()
         && (request.resource.data.get('sessionId', '') == '' || gueltigeBuchung(request.resource.data))
+        && (request.resource.data.get('sessionId', '') != '' || (request.resource.data.get('teilnehmer', [meineUid()]).toSet().hasOnly([meineUid()]) && request.resource.data.get('zugewiesen', []).size() == 0))
         && (vollzugriff() || planEintrag(request.resource.data)
           || (request.resource.data.get('typ', '') == 'termin' && request.resource.data.get('kreisIds', []).size() == 1
             && binMitglied(request.resource.data.kreisIds[0]) && request.resource.data.get('zugewiesen', []).size() == 0));
-      allow update: if angemeldet() && resource.data.get('sessionId', '') == '' && request.resource.data.ownerId == resource.data.ownerId
-        && (istBetreiber() || resource.data.ownerId == meineUid()
+      allow update: if angemeldet() && resource.data.get('sessionId', '') == '' && request.resource.data.get('workflowId', '') == resource.data.get('workflowId', '') && request.resource.data.ownerId == resource.data.ownerId
+        && (request.resource.data.get('teilnehmer', [resource.data.ownerId]).toSet().hasOnly([resource.data.ownerId]) || request.resource.data.get('teilnehmer', []) == resource.data.get('teilnehmer', []))
+        && ((resource.data.ownerId == meineUid() && (resource.data.get('workflowId', '') == '' || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status'])))
           || (planEintrag(resource.data) && request.resource.data.get('kreisIds', []) == resource.data.get('kreisIds', [])));
       allow update: if angemeldet() && resource.data.get('sessionId', '') != '' && planEintrag(resource.data)
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['titel', 'ort', 'notiz', 'suchtext', 'sichtbarFuer']);
+      allow update: if angemeldet() && planEintrag(resource.data) && resource.data.get('providerUid', 'not-a-tour') == ''
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['executorUid', 'teilnehmer'])
+        && request.resource.data.teilnehmer.toSet() == (request.resource.data.executorUid == '' ? [resource.data.participantUid] : [resource.data.participantUid, request.resource.data.executorUid]).toSet()
+        && (request.resource.data.executorUid == '' || (request.resource.data.executorUid in kreis(resource.data.kreisIds[0]).mitglieder
+          && zeitGesperrt(request.resource.data.executorUid, resource.data, resource.data.von - resource.data.von % 5)
+          && zeitGesperrt(request.resource.data.executorUid, resource.data, resource.data.bis - 1 - (resource.data.bis - 1) % 5)));
       allow delete: if angemeldet() && (verwalteEintrag(resource.data) || meineBuchung(resource.data))
         && (resource.data.get('sessionId', '') == '' ||
           ((!existsAfter(/databases/$(database)/documents/sitzungen/$(resource.data.sessionId))
@@ -326,6 +376,67 @@ service cloud.firestore {
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['zusagen'])
         && request.resource.data.get('zusagen', {}).diff(resource.data.get('zusagen', {})).affectedKeys().hasOnly([meineUid()])
         && request.resource.data.zusagen[meineUid()] in ['ja', 'nein'];
+    }
+
+    // Only each participant may record their own consent. A confirmation
+    // authorizes exact personal copies, never arbitrary writes to other calendars.
+    match /abstimmungen/{id} {
+      function localMember(w) { return kreisDa(w.kreisId) && meineUid() in kreis(w.kreisId).mitglieder; }
+      function allowedPeople(w) {
+        let k = kreis(w.kreisId);
+        let r = k.get('rechte', {}).get(meineUid(), {});
+        let allowed = r.get('planenMit', 'alle') == 'verwalter' ? k.verwalter : (r.get('planenMit', 'alle') == 'auswahl' ? r.get('personen', []) : k.mitglieder);
+        return w.teilnehmer.toSet().difference([meineUid()].toSet()).hasOnly(allowed);
+      }
+      function allYes(w) { return w.teilnehmer.size() > 0 && w.zusagen.keys().toSet() == w.teilnehmer.toSet() && w.zusagen.values().toSet().hasOnly(['ja']); }
+      function valid(w) { return w.teilnehmer is list && w.teilnehmer.size() <= 20 && w.teilnehmer.toSet().hasOnly(kreis(w.kreisId).mitglieder)
+        && w.kind in ['open', 'service'] && w.phase in ['pending', 'ready', 'confirmed', 'rejected', 'cancelled']
+        && w.daten.typ in ['termin', 'task'] && w.daten.datum is string; }
+      function serviceOwner(w) { return w.kind == 'service' && planEintrag({'kreisIds': [w.kreisId]}); }
+      allow read: if angemeldet() && meineUid() in resource.data.teilnehmer;
+      allow get: if angemeldet() && resource == null && id.matches('service_[a-zA-Z0-9]+')
+        && planEintrag(get(/databases/$(database)/documents/eintraege/$(id.split('_')[1])).data);
+      allow create: if angemeldet() && localMember(request.resource.data) && valid(request.resource.data)
+        && request.resource.data.erstellerId == meineUid() && meineUid() in request.resource.data.teilnehmer
+        && request.resource.data.zusagen.keys().hasOnly([meineUid()]) && request.resource.data.zusagen[meineUid()] == 'ja'
+        && request.resource.data.phase == 'pending' && request.resource.data.revision == 1
+        && ((request.resource.data.kind == 'open' && kreis(request.resource.data.kreisId).get('art', 'kreis') != 'stern'
+          && request.resource.data.basis == null && allowedPeople(request.resource.data))
+          || (serviceOwner(request.resource.data) && get(/databases/$(database)/documents/eintraege/$(request.resource.data.entryId)).data.participantUid in request.resource.data.teilnehmer));
+      allow update: if angemeldet() && localMember(resource.data) && meineUid() in resource.data.teilnehmer && valid(request.resource.data)
+        && request.resource.data.kind == resource.data.kind && request.resource.data.kreisId == resource.data.kreisId
+        && request.resource.data.erstellerId == resource.data.erstellerId
+        && (
+          // A new time invalidates every previous vote; only its proposer starts with yes.
+          (request.resource.data.revision == resource.data.revision + 1
+            && request.resource.data.teilnehmer == resource.data.teilnehmer && request.resource.data.basis == resource.data.basis
+            && request.resource.data.phase == 'pending' && request.resource.data.zusagen.keys().hasOnly([meineUid()])
+            && request.resource.data.zusagen[meineUid()] == 'ja' && (resource.data.kind == 'open' || serviceOwner(resource.data)))
+          || (request.resource.data.revision == resource.data.revision
+            && (resource.data.phase != 'confirmed' || (request.resource.data.phase in ['confirmed', 'cancelled']
+              && resource.data.teilnehmer.toSet().difference(request.resource.data.teilnehmer.toSet()).hasOnly([meineUid()])
+              && resource.data.teilnehmer.size() == request.resource.data.teilnehmer.size() + 1))
+            && request.resource.data.daten == resource.data.daten
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['teilnehmer', 'zusagen', 'phase', 'basis', 'newEntryId', 'entfernterUid'])
+            && (
+              (request.resource.data.teilnehmer == resource.data.teilnehmer
+                && request.resource.data.zusagen.diff(resource.data.zusagen).affectedKeys().hasOnly([meineUid()])
+                && request.resource.data.zusagen[meineUid()] in ['ja', 'nein'] && (resource.data.kind == 'service' || allowedPeople(resource.data)))
+              || (request.resource.data.teilnehmer.toSet().difference(resource.data.teilnehmer.toSet()).size() == 0
+                && resource.data.teilnehmer.size() == request.resource.data.teilnehmer.size() + 1
+                && resource.data.teilnehmer.toSet().difference(request.resource.data.teilnehmer.toSet()).hasOnly([meineUid()])
+                && request.resource.data.zusagen.diff(resource.data.zusagen).affectedKeys().hasOnly([meineUid()]))
+              || (meineUid() == resource.data.erstellerId && resource.data.basis == null
+                && request.resource.data.teilnehmer.toSet().difference(resource.data.teilnehmer.toSet()).size() == 0
+                && resource.data.teilnehmer.toSet().difference(request.resource.data.teilnehmer.toSet()).size() == 1
+                && request.resource.data.get('entfernterUid', '') in resource.data.teilnehmer.toSet().difference(request.resource.data.teilnehmer.toSet())
+                && resource.data.zusagen[request.resource.data.get('entfernterUid', '')] == 'nein'
+                && request.resource.data.zusagen.diff(resource.data.zusagen).affectedKeys().hasOnly(resource.data.teilnehmer.toSet().difference(request.resource.data.teilnehmer.toSet())))
+            )
+            && (request.resource.data.phase == 'pending' || (request.resource.data.phase == 'rejected' && resource.data.kind == 'service') || (request.resource.data.phase == 'cancelled' && request.resource.data.teilnehmer.size() == 0) || allYes(request.resource.data))
+            && (request.resource.data.basis == resource.data.basis || (request.resource.data.phase == 'confirmed' && request.resource.data.basis == request.resource.data.daten))
+          )
+        );
     }
 
     // ================= BELEGTE ZEITEN =================
@@ -339,7 +450,7 @@ service cloud.firestore {
     match /belegt/{belegtId} {
       function geplanterSchatten() {
         let ein = getAfter(/databases/$(database)/documents/eintraege/$(belegtId)).data;
-        return planEintrag(ein) && request.resource.data.ownerId == ein.ownerId;
+        return (planEintrag(ein) || workflowKopie(ein, belegtId)) && request.resource.data.ownerId == ein.ownerId;
       }
       allow read: if angemeldet() && (istBetreiber() || resource.data.get('ownerId', '') == meineUid()
         || meineUid() in resource.data.get('sichtbarFuer', []));
@@ -348,7 +459,7 @@ service cloud.firestore {
         && (resource.data.ownerId == meineUid() || istBetreiber() || geplanterSchatten());
       allow delete: if angemeldet() && (resource.data.get('ownerId', '') == meineUid() || istBetreiber()
         || (exists(/databases/$(database)/documents/eintraege/$(belegtId))
-          && (planEintrag(get(/databases/$(database)/documents/eintraege/$(belegtId)).data)
+          && (verwalteEintrag(get(/databases/$(database)/documents/eintraege/$(belegtId)).data)
             || meineBuchung(get(/databases/$(database)/documents/eintraege/$(belegtId)).data))));
     }
 
@@ -370,7 +481,9 @@ service cloud.firestore {
       function passend(d) {
         let e = getAfter(/databases/$(database)/documents/eintraege/$(d.eintragId)).data;
         return kennung == d.eintragId + '_' + d.uid && verwalteEintrag(e)
-          && d.uid in e.get('teilnehmer', [e.ownerId]) && d.datum == e.datum
+          && d.uid in e.get('teilnehmer', [e.ownerId]) && (e.get('sessionId', '') != '' || d.uid == e.ownerId) && d.datum == e.datum
+          && d.von == timeMinute(e.start)
+          && d.bis == (e.get('ende', '') != '' ? timeMinute(e.ende) : timeMinute(e.start) + (e.get('dauer', 0) > 0 ? e.dauer : 60))
           && d.von is int && d.bis is int && d.von >= 0 && d.bis <= 1440 && d.bis > d.von
           && d.token == e.get('token', 'privat~' + d.eintragId)
           && d.wiederholung == e.get('wiederholung', 'einmal')
@@ -429,16 +542,18 @@ service cloud.firestore {
     match /zeitsperren/{kennung} {
       function gebuchteSperre(d) {
         let s = getAfter(/databases/$(database)/documents/sitzungen/$(d.sessionId)).data;
-        let e = getAfter(/databases/$(database)/documents/eintraege/$(s.aktionId)).data;
+        let entryId = d.entryId == '' ? s.aktionId : d.entryId;
+        let e = getAfter(/databases/$(database)/documents/eintraege/$(entryId)).data;
         return d.kreisId == s.kreisId && d.datum == s.datum
           && d.minute >= s.von - 4 && d.minute < s.bis
-          && (d.uid == s.providerUid || d.uid == e.participantUid)
-          && e.ownerId == meineUid() && (e.participantUid == meineUid() || binPlaner(s.kreisId));
+          && s.seats[entryId] == e.participantUid
+          && (d.uid == s.providerUid || d.uid == e.participantUid || d.uid == e.get('executorUid', ''))
+          && (e.ownerId == meineUid() || servicePlaner(s.kreisId)) && (e.participantUid == meineUid() || binPlaner(s.kreisId));
       }
       function privateSperre(d) {
         let e = getAfter(/databases/$(database)/documents/eintraege/$(d.entryId)).data;
-        return d.sessionId == 'privat~' + d.entryId && verwalteEintrag(e)
-          && d.uid in e.get('teilnehmer', [e.ownerId]);
+        return d.sessionId == 'privat~' + d.entryId && d.uid == e.ownerId
+          && (e.ownerId == meineUid() || (workflowVerwalten(e) && d.datum == e.datum && d.minute >= e.von - 4 && d.minute < e.bis));
       }
       function gueltigeSperre(d) {
         return d.minute is int && d.minute >= 0 && d.minute < 1440 && d.minute % 5 == 0
@@ -455,7 +570,8 @@ service cloud.firestore {
       }
       allow read: if false;
       allow create: if angemeldet() && gueltigeSperre(request.resource.data);
-      allow update: if angemeldet() && (request.resource.data.sessionId == resource.data.sessionId
+      allow update: if angemeldet() && ((request.resource.data.sessionId == resource.data.sessionId
+        && (resource.data.entryId == '' || request.resource.data.entryId == resource.data.entryId))
         || (resource.data.sessionId != 'privat~' + resource.data.entryId &&
           (resource.data.entryId == '' ? !existsAfter(/databases/$(database)/documents/sitzungen/$(resource.data.sessionId))
             : !existsAfter(/databases/$(database)/documents/eintraege/$(resource.data.entryId)))))

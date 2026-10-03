@@ -37,3 +37,10 @@ test('Saturday uses its own working hours', () => {
   const k = { zeiten: [{ tage: [0,1,2,3,4], von: '09:00', bis: '17:00' }, { tage: [5], von: '10:00', bis: '12:00' }], arten: [art('Rest', '', '', 'rest')] };
   assert.equal(context.fensterFuer(k, '2026-10-10').length, 2);
 });
+test('closing all work days leaves no slots in a configured service orbit', () => {
+  assert.deepEqual(slots({ arbeitszeitenVersion: 1, zeiten: [], arten: [art('A', '09:00', '17:00')] }), []);
+});
+test('rest types may be limited to selected weekdays', () => {
+  const k = { zeiten: [{ tage: [0, 5], von: '09:00', bis: '10:00' }], arten: [{ ...art('Rest', '', '', 'rest'), tage: [5] }] };
+  assert.deepEqual(slots(k), []); assert.equal(context.fensterFuer(k, '2026-10-10').length, 1);
+});

@@ -15,20 +15,22 @@
  * weiter die alte Fassung, egal was auf dem Server liegt.
  */
 
-const VERSION = "orbyx-16";
+const VERSION = "orbyx-17";
 const DATEIEN = [
   "./",
   "./index.html",
   "./app.js",
   "./startup.js",
   "./booking.js",
+  "./collaboration.js",
+  "./collaboration.js?v=17",
   "./ui.css",
   "./i18n.js",
-  "./startup.js?v=16",
-  "./app.js?v=16",
-  "./booking.js?v=16",
-  "./ui.css?v=16",
-  "./i18n.js?v=16",
+  "./startup.js?v=17",
+  "./app.js?v=17",
+  "./booking.js?v=17",
+  "./ui.css?v=17",
+  "./i18n.js?v=17",
   "./manifest.webmanifest",
   "./icons/icon-192.png",
   "./icons/icon-512.png",

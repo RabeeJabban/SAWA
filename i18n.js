@@ -975,3 +975,20 @@ export function spracheRaten() {
   }
   return "de";
 }
+
+Object.assign(TEXTE.de, {
+  wfOffen: 'Offene Anfragen',
+  wfFarbe: 'Farbe der Terminart', wfBelegung: 'Belegung', wfGemeinsam: 'Gemeinsamer Termin mit Anbieter', wfParallel: 'Unabhängige Touren',
+  wfPlanenMit: 'Darf Termine planen mit', wfAlle: 'Allen Mitgliedern', wfVerwalter: 'Nur Verwaltern', wfAuswahl: 'Ausgewählten Personen',
+  wfRestAlle: 'Rest an allen Arbeitstagen', wfAppEinladung: 'App-Einladung ohne Orbit', wfPersoenlich: 'Persönlicher Kalender und Aufgaben',
+  wfOrbits: 'Orbits erstellen', wfAufgabe: 'Aufgabe ohne Zeitfenster', wfExecutor: 'Ausführende Person dieser Tour',
+  wfExecutorHinweis: 'Nur die zugewiesene Person wird zusätzlich als beschäftigt reserviert.'
+});
+Object.assign(TEXTE.ar, {
+  wfOffen: 'طلبات بانتظار الرد',
+  wfFarbe: 'لون نوع الموعد', wfBelegung: 'نوع الحجز', wfGemeinsam: 'موعد مشترك مع مقدم الخدمة', wfParallel: 'رحلات مستقلة',
+  wfPlanenMit: 'يمكنه التخطيط مع', wfAlle: 'جميع الأعضاء', wfVerwalter: 'المسؤولين فقط', wfAuswahl: 'أشخاص محددين',
+  wfRestAlle: 'الوقت المتبقي في كل أيام العمل', wfAppEinladung: 'دعوة إلى التطبيق دون مجموعة', wfPersoenlich: 'تقويم شخصي ومهام',
+  wfOrbits: 'إنشاء مجموعات', wfAufgabe: 'مهمة دون فترة زمنية', wfExecutor: 'منفذ هذه الرحلة',
+  wfExecutorHinweis: 'يتم حجز وقت الشخص المعين فقط.'
+});

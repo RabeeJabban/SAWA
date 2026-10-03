@@ -92,7 +92,7 @@ self.addEventListener('fetch', ev => {
   await context.addInitScript(({ today }) => {
     localStorage.setItem('orbyx.sprache', 'de');
     window.__seq = 0;
-    window.__user = { uid: 'admin', email: 'rabea.jabban.mrj@gmail.com', displayName: 'Rabea' };
+    window.__user = { uid: 'admin', email: 'rabea.jabban.mrj@gmail.com', emailVerified: true, displayName: 'Rabea' };
     const entry = (title, kreisIds, ownerId = 'admin') => ({ titel: title, typ: 'termin', datum: today, start: '10:00', ende: '11:00', dauer: 60, wiederholung: 'einmal', kreisIds, ownerId, sichtbarFuer: ['admin', 'member'], zugewiesen: [], zusagen: {} });
     window.__db = {
       users: { admin: { name: 'Rabea', vollzugriff: true }, member: { name: 'Mitarbeiter', vollzugriff: false } },
@@ -237,6 +237,7 @@ self.addEventListener('fetch', ev => {
     await page.locator('#kreiseBtn').click();
     await page.locator('#orbitNeuBtn').click();
     await page.locator('#kName').fill('Service Süd');
+    await page.locator('#artStern').click();
     await page.locator('#kreisAnlegen').click();
     assert.equal(await page.evaluate(() => Object.values(window.__db.kreise).some(k => k.name === 'Service Süd')), false);
     await page.locator('#eArtName').fill('Erstgespräch');
@@ -261,7 +262,7 @@ self.addEventListener('fetch', ev => {
     await page.waitForFunction(() => window.__db.eintraege.group.titel === 'Gemeinsam bearbeitet');
     assert.equal(await page.evaluate(() => window.__db.eintraege.group.ownerId), 'member');
     const sourceId = await page.evaluate(async () => {
-      const m = await import('/app.js?v=16'), k = { id: 'team', ...window.__db.kreise.team }, a = k.arten.find(a => a.name === 'Beratung');
+      const m = await import('/app.js?v=17'), k = { id: 'team', ...window.__db.kreise.team }, a = k.arten.find(a => a.name === 'Beratung');
       return (await m.reserviereTermin(k, '2026-10-05', { von: 600, bis: 660, plaetze: 1, art: a }, 'member', true)).id;
     });
     await page.locator('.miniTag:not(.fremd)').filter({ hasText: /^5$/ }).click();
@@ -270,6 +271,13 @@ self.addEventListener('fetch', ev => {
     await page.locator('#fStart').fill('11:00');
     assert.equal(await page.locator('#fEnde').inputValue(), '12:00');
     await page.locator('#formEintrag button[type=submit]').click();
+    await page.waitForFunction(id => window.__db.abstimmungen?.['service_' + id], sourceId);
+    assert.equal(await page.evaluate(id => window.__db.eintraege[id].start, sourceId), '10:00', 'the original time remains reserved until the customer agrees');
+    await page.evaluate(async id => {
+      window.__user.uid = 'member';
+      try { const m = await import('/app.js?v=17'); await m.beantworteAnfrage('service_' + id, 'ja', 1); }
+      finally { window.__user.uid = 'admin'; }
+    }, sourceId);
     await page.waitForFunction(id => !window.__db.eintraege[id], sourceId);
     const shifted = await page.evaluate(() => {
       const pair = Object.entries(window.__db.eintraege).find(([id, e]) => e.sessionId && e.datum === '2026-10-05');
@@ -308,6 +316,38 @@ self.addEventListener('fetch', ev => {
     await page.locator('#nav [data-v=monat]').click();
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'mobile overflow');
     await page.screenshot({ path: path.join(root, 'preview/mobile.png'), fullPage: true, animations: 'disabled' });
+    await page.locator('#kreiseBtn').click();
+    await page.locator('#orbitNeuBtn').click();
+    await page.locator('#kName').fill('Familie');
+    await page.locator('#kreisAnlegen').click();
+    await page.waitForFunction(() => Object.values(window.__db.kreise).some(k => k.name === 'Familie'));
+    assert.equal(await page.locator('#dlgKreisEinst').isVisible(), false, 'open orbit has no work time or type setup');
+    const familyId = await page.evaluate(async () => {
+      const id = Object.keys(window.__db.kreise).find(id => window.__db.kreise[id].name === 'Familie');
+      const firebase = await import('/__firebase.js');
+      await firebase.updateDoc(firebase.doc({}, 'kreise', id), { mitglieder: ['admin', 'member'], info: { admin: { name: 'Rabea' }, member: { name: 'Mitarbeiter' } } });
+      return id;
+    });
+    await page.getByRole('tab', { name: 'Familie', exact: true }).click();
+    await page.locator('#neuBtn').click();
+    await visible('#dlgFinden');
+    await page.locator('#findenPersonen button', { hasText: 'Mitarbeiter' }).click();
+    await page.locator('#findenAufgabe').click();
+    await visible('#dlgEintrag');
+    await page.locator('#fTitel').fill('Familienaufgabe');
+    await page.locator('#fFrist').fill('2026-10-15');
+    await page.locator('#formEintrag button[type=submit]').click();
+    await page.waitForFunction(() => Object.values(window.__db.abstimmungen).some(r => r.daten.titel === 'Familienaufgabe'));
+    assert.equal(await page.evaluate(() => Object.values(window.__db.eintraege).some(e => e.titel === 'Familienaufgabe')), false);
+    const requestId = await page.evaluate(() => Object.keys(window.__db.abstimmungen).find(id => window.__db.abstimmungen[id].daten.titel === 'Familienaufgabe'));
+    await page.screenshot({ path: path.join(root, 'preview/open-request.png'), fullPage: true, animations: 'disabled' });
+    await page.evaluate(async id => {
+      window.__user.uid = 'member';
+      try { const m = await import('/app.js?v=17'); await m.beantworteAnfrage(id, 'ja', 1); }
+      finally { window.__user.uid = 'admin'; }
+    }, requestId);
+    assert.equal(await page.evaluate(id => Object.values(window.__db.eintraege).filter(e => e.workflowId === id).length, requestId), 2);
+    assert.equal(await page.evaluate(id => Object.values(window.__db.zeitsperren).some(s => s.entryId.startsWith(id)), requestId), false);
     await page.locator('#michBtn').click();
     await page.locator('#sprachwahl2 button[lang=ar]').click();
     await page.locator('#michZu').click();
@@ -337,7 +377,7 @@ self.addEventListener('fetch', ev => {
     await visible('#dlgSuchen');
     await page.locator('#suZu').click();
     const bookingResult = await page.evaluate(async () => {
-      const m = await import('/app.js?v=16');
+      const m = await import('/app.js?v=17');
       const firebase = await import('/__firebase.js');
       const k = { id: 'team', ...window.__db.kreise.team };
       const f = { von: 540, bis: 600, plaetze: 1, art: { ...k.arten[0], ort: 'Campus A' } };
@@ -375,7 +415,7 @@ self.addEventListener('fetch', ev => {
       });
       const cachedPage = await cachedContext.newPage();
       const origin = 'http://127.0.0.1:' + server.address().port;
-      await cachedPage.goto(origin + '/?v=16');
+      await cachedPage.goto(origin + '/?v=17');
       await cachedPage.waitForSelector('#sprachwahl button[lang=de]');
       await cachedPage.evaluate(async () => {
         await navigator.serviceWorker.register('/__old-worker.js');
@@ -388,7 +428,7 @@ self.addEventListener('fetch', ev => {
       await cachedPage.waitForFunction(() => navigator.serviceWorker.controller);
       await cachedPage.goto(origin + '/');
       assert.equal(await cachedPage.locator('body').innerText(), 'Alte Ansicht: Ich');
-      await cachedPage.goto(origin + '/?v=16');
+      await cachedPage.goto(origin + '/?v=17');
       await cachedPage.waitForSelector('#sprachwahl button[lang=de]');
       assert.equal(await cachedPage.locator('#eintragLoeschenBtn').count(), 1);
       assert.equal(await cachedPage.locator('#seiteOrbits').count(), 0);

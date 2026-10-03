@@ -1,10 +1,10 @@
 # Für später: Orbyx über GitHub und Firebase veröffentlichen
 
-**Jetzt wird nur der Code gespeichert.** Dafür gilt [GITHUB-DATEIEN.md](GITHUB-DATEIEN.md); das Repository bleibt öffentlich und die Arbeitsbranch heißt `entwicklung`. Die folgenden Schritte werden erst ausgeführt, wenn die App veröffentlicht werden soll.
+**Firebase Hosting folgt erst nach den weiteren Verbesserungen.** Die aktuelle App ist bereits auf GitHub Pages erreichbar. Für Code-Änderungen gilt [GITHUB-DATEIEN.md](GITHUB-DATEIEN.md); das Repository bleibt öffentlich und die Arbeitsbranch heißt `entwicklung`. Die folgenden Schritte werden erst für die Veröffentlichung bei Firebase ausgeführt.
 
 Die spätere Veröffentlichung benötigt keinen lokalen Webserver und kein Terminal auf deinem Laptop. GitHub Actions veröffentlicht die App bei Firebase, wenn du den Workflow manuell startest. Für die einmalige Übernahme der alten Daten gibt es eine separate Anleitung mit Google Cloud Shell im Browser. Der Laptop muss für den laufenden App-Betrieb nicht eingeschaltet bleiben.
 
-Am 2. Oktober 2026 wurde geprüft: [RabeeJabban/Obryx](https://github.com/RabeeJabban/Obryx) ist öffentlich und verwendet die Branch `main`. Die [bisherige Webseite](https://rabeejabban.github.io/Obryx/) lieferte bei dieser Prüfung noch `orbyx-10` und lud `app.js` direkt. Hier ist Version `orbyx-16` mit deiner neuen Projektkonfiguration vorbereitet. Die Änderungen sind bisher nicht auf GitHub veröffentlicht.
+Am 3. Oktober 2026 wurde geprüft: [RabeeJabban/Obryx](https://github.com/RabeeJabban/Obryx) ist öffentlich; `main` und `entwicklung` enthalten den hochgeladenen App-Code. Die [aktuelle Webseite](https://rabeejabban.github.io/Obryx/?v=16) liefert Version `orbyx-16` mit der Konfiguration für `orbyx-8d73c`. Der lokal vorbereitete Firebase-Workflow wurde beim Browser-Upload noch nicht auf GitHub übernommen. Für die späteren Schritte muss auch `.github/workflows/firebase-hosting.yml` hochgeladen werden.
 
 ## Vor der Veröffentlichung: neues Projekt und alte Daten
 
@@ -60,7 +60,7 @@ Das vorbereitete Paket heißt `Orbyx-GitHub-Update.zip`. Es enthält App, Symbol
 2. Öffne [GitHub → Dateien hochladen](https://github.com/RabeeJabban/Obryx/upload/main).
 3. Ziehe den **Inhalt** des Update-Ordners in das Upload-Feld: die Dateien und Unterordner einschließlich `.github`, `icons`, `tools` und `tests`. Ziehe nicht den äußeren Update-Ordner hinein. `index.html` muss direkt in der Wurzel des Repositorys liegen.
 4. Kontrolliere, dass unter anderem `ui.css`, `startup.js`, `booking.js`, `firebase.json` und `.github/workflows/firebase-hosting.yml` hinzugefügt werden.
-5. Schreibe als Commit-Nachricht: `Orbyx Version 16 und Firebase-Veröffentlichung`.
+5. Schreibe als Commit-Nachricht: `Orbyx Version 17 und Firebase-Veröffentlichung`.
 6. Speichere die fertigen Änderungen auf `main` mit **Commit changes**. Wenn der Code bereits in `entwicklung` liegt, führe stattdessen diese Branch per Pull Request nach `main` zusammen. Dieser Schritt gehört zur späteren Veröffentlichung, nicht zum jetzigen Speichern des Codes.
 
 GitHub beschreibt den Upload unter [Dateien zu einem Repository hinzufügen](https://docs.github.com/en/repositories/working-with-files/managing-files/adding-a-file-to-a-repository).
@@ -69,7 +69,7 @@ GitHub beschreibt den Upload unter [Dateien zu einem Repository hinzufügen](htt
 
 Öffne [GitHub → Actions](https://github.com/RabeeJabban/Obryx/actions). Der Workflow **Orbyx auf Firebase veröffentlichen** startet ausschließlich manuell. Wähle **Run workflow → main → Run workflow**, wenn du die fertige App veröffentlichen möchtest. Er prüft die Buchungslogik, bereitet die App-Dateien vor und veröffentlicht sie auf Firebase Hosting.
 
-Warte, bis der Lauf grün ist. Danach öffne [https://orbyx-8d73c.web.app/?v=16](https://orbyx-8d73c.web.app/?v=16).
+Warte, bis der Lauf grün ist. Danach öffne [https://orbyx-8d73c.web.app/?v=17](https://orbyx-8d73c.web.app/?v=17).
 
 Spätere Code-Uploads veröffentlichen keine neue Webseite. Für ein Update startest du denselben Workflow erneut, sobald die Änderungen fertig sind.
 
@@ -88,3 +88,4 @@ Teile anschließend den Firebase-Link mit deinen Nutzern. Bei GitHub Free setzt 
 GitHub Actions kann weiterhin aus dem privaten Repository zu Firebase veröffentlichen. Siehe [Firebase-GitHub-Anbindung](https://firebase.google.com/docs/hosting/github-integration).
 
 Verwende für Firebase den kostenlosen Spark-Tarif und klassisches **Hosting**. Die kostenlose Nutzung hängt von den Kontingenten und tatsächlichen Zugriffen ab; 60 Konten allein garantieren nicht, dass der Verbrauch innerhalb der Grenzen bleibt. Siehe [Firebase-Tarife](https://firebase.google.com/docs/projects/billing/firebase-pricing-plans).
+

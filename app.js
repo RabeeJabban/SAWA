@@ -24,6 +24,7 @@ const BETREIBER = ["rabea.jabban.mrj@gmail.com"];
 
 /* =================================================================== */
 
+import { collaboration, canMeet, participantsFor } from './collaboration.js?v=17';
 import { initializeApp }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import {
@@ -37,8 +38,8 @@ import {
 
 import {
   SPRACHEN, t, liste, setzeSprache, holeSprache, istRTL, spracheRaten
-} from "./i18n.js?v=16";
-import { sessionKey, lockKeys, claimSeat, releaseSeat, bookingBlocked, BookingError } from "./booking.js?v=16";
+} from "./i18n.js?v=17";
+import { sessionKey, lockKeys, claimSeat, releaseSeat, bookingBlocked, BookingError } from "./booking.js?v=17";
 
 const app  = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -360,6 +361,57 @@ let zeitStatusGeneration = 0;
 let slots          = [];       // vergebene Zeitfenster in exklusiven Kreisen
 let nachrichten    = [];
 let meineEinladungen = [];   // was mir angeboten wurde
+let abstimmungen = [];
+function zeichneAbstimmungen() {
+  const box = $("abstimmungen");
+  if (!box || !nutzer) return;
+  box.replaceChildren();
+  const active = abstimmungen.filter(item => ['pending', 'ready'].includes(item.phase) && (!planKreis || item.kreisId === planKreis));
+  for (const item of active) {
+    const card = el('article', 'anfrage');
+    card.append(el('strong', null, item.daten.titel || textNeu('Terminanfrage', 'طلب موعد')),
+      el('p', 'hinweis', item.daten.start ? `${kurzDatum(item.daten.datum)} · ${item.daten.start}–${item.daten.ende}` : textNeu('Aufgabe ohne Zeitfenster', 'مهمة دون فترة زمنية') + (item.daten.frist ? ` · ${t('fFrist')}: ${kurzDatum(item.daten.frist)}` : '')),
+      el('p', 'hinweis', textNeu(item.basis ? 'Verschiebung: Die alte Zeit bleibt bis zur Zusage reserviert.' : 'Noch keine Zeit reserviert.', item.basis ? 'تظل الفترة السابقة محجوزة حتى الموافقة.' : 'الوقت غير محجوز بعد.')));
+    const controls = el('div', 'aktionen');
+    const action = (label, handler, danger = false) => {
+      const button = el('button', 'klein' + (danger ? ' gefahr' : ''), label); button.type = 'button';
+      button.onclick = async () => { button.disabled = true; try { await handler(); } catch (error) { alert(buchungsFehler(error)); } finally { button.disabled = false; } };
+      controls.append(button);
+    };
+    if (item.zusagen[nutzer.uid] !== 'ja' || item.phase === 'ready') action(textNeu('Zusagen', 'موافقة'), () => zusammen.respond(item.id, 'ja', item.revision));
+    else controls.append(el('span', 'rolle', textNeu('Du hast zugesagt', 'لقد وافقت')));
+    if (item.kind !== 'service' || item.erstellerId !== nutzer.uid) action(textNeu('Ablehnen', 'رفض'), () => zusammen.respond(item.id, 'nein', item.revision), true);
+    for (const uid of item.teilnehmer) {
+      const row = el('p', 'hinweis', `${vorname(uid)} · ${item.zusagen[uid] === 'ja' ? textNeu('Zugesagt', 'وافق') : item.zusagen[uid] === 'nein' ? textNeu('Abgelehnt', 'رفض') : textNeu('Offen', 'بانتظار الرد')}`);
+      card.append(row);
+      if (!item.basis && item.erstellerId === nutzer.uid && item.zusagen[uid] === 'nein') action(textNeu(`${vorname(uid)} entfernen`, `إزالة ${vorname(uid)}`), () => zusammen.removeDeclined(item.id, uid), true);
+    }
+    card.append(controls); box.append(card);
+  }
+}
+const textNeu = (de, ar) => istRTL() ? ar : de;
+const zusammen = collaboration({ db, doc, collection, runTransaction, onSnapshot, query, where, setDoc, serverTimestamp,
+  user: () => nutzer, minutes: minuten, writeLocks: schreibeZeitSperren, removeLocks: entferneZeitSperren,
+  writeStatus: schreibeZeitStatus, removeStatus: entferneZeitStatus, releaseService: schreibeBuchungsFreigabe,
+  error: error => console.warn('Abstimmungen:', error.code),
+  notify: async (request, id, message) => {
+    await Promise.all(request.teilnehmer.filter(uid => uid !== nutzer.uid).map(uid => addDoc(collection(db, 'nachrichten'), {
+      anUid: uid, vonUid: nutzer.uid, vonName: meinName(), art: 'text', text: message + ': ' + request.daten.titel,
+      workflowId: id, gelesen: false, erstelltAm: serverTimestamp()
+    }).catch(error => console.warn('Benachrichtigung:', error.code))));
+  },
+  confirmService: async (id, request) => {
+    const snapshot = await getDoc(doc(db, 'eintraege', request.entryId));
+    if (!snapshot.exists()) throw new BookingError('missing-booking');
+    const old = { id: snapshot.id, ...snapshot.data() }, k = kreisVon(request.kreisId), data = request.daten;
+    const window = fensterFuer(k, data.datum).find(f => f.art.name === data.artName && f.von === minuten(data.start) && f.bis === minuten(data.ende));
+    if (!window) throw new BookingError('changed-session');
+    await reserviereTermin(k, data.datum, window, old.participantUid, false, old, data, id);
+  }
+});
+export async function beantworteAnfrage(id, antwort, revision) {
+  return zusammen.respond(id, antwort, revision);
+}
 let offeneEinladungen = {};  // was ich anderen angeboten habe
 
 let eigene = [], geteilte = [];
@@ -372,8 +424,7 @@ function sammleEintraege() {
 }
 function starteTeamEintraege() {
   stopTeam.forEach((stop) => stop()); stopTeam = []; teamEintraege.clear();
-  if (istBetreiber()) return;
-  meineKreise.filter((k) => darfPlanen(k) && !frischeKreise.has(k.id)).forEach((k) => {
+  meineKreise.filter((k) => istStern(k) && istTeamPlaner(k) && !frischeKreise.has(k.id)).forEach((k) => {
     stopTeam.push(onSnapshot(query(collection(db, "eintraege"), where("kreisIds", "==", [k.id])), (snap) => {
       teamEintraege.set(k.id, snap.docs.map((d) => ({ id: d.id, ...d.data() })));
       sammleEintraege();
@@ -407,7 +458,7 @@ let gewaehlteArt = "";         // Name der gewählten Terminart
 
 function istStern(k) { return (k.art || "kreis") === "stern"; }
 function binVerwalter(k) { return istBetreiber() || (k.verwalter || []).includes(nutzer.uid); }
-function istTeamPlaner(k) { return binVerwalter(k) || (k.planer || []).includes(nutzer.uid); }
+function istTeamPlaner(k) { return !!k && (k.mitglieder || []).includes(nutzer.uid) && ((k.verwalter || []).includes(nutzer.uid) || (k.planer || []).includes(nutzer.uid)); }
 function rechteVon(k, uid = nutzer.uid) { return (k.rechte || {})[uid] || {}; }
 function darfEinladen(k) { return binVerwalter(k) || rechteVon(k).einladen === true; }
 function darfTerminart(k, art, uid = nutzer.uid) {
@@ -415,7 +466,7 @@ function darfTerminart(k, art, uid = nutzer.uid) {
   const erlaubt = rechteVon(k, uid).terminarten;
   return !Array.isArray(erlaubt) || erlaubt.includes(art.name);
 }
-function anbieterVon(k, art) { return art?.providerUid || k.erstellerId; }
+function anbieterVon(k, art) { return art?.belegung === "parallel" ? "" : (art?.providerUid || k.erstellerId); }
 function sitzungsId(k, tag, f) { return sessionKey(k.id, tag, f.von, f.bis, f.art?.name || "", anbieterVon(k, f.art)); }
 function zeitKonflikt(k, tag, f, uid = nutzer.uid, events = [...meineEintraege, ...belegtFremd], ignorieren = "") {
   const person = anbieterVon(k, f.art);
@@ -445,7 +496,7 @@ function sichtbarePersonen() {
 }
 function sichtbarFuerListe(kreisIds, personen) {
   const s = new Set([nutzer.uid]);
-  meineKreise.filter((k) => kreisIds.includes(k.id))
+  meineKreise.filter((k) => istStern(k) && kreisIds.includes(k.id))
              .forEach((k) => (istStern(k)
                ? [...(k.verwalter || []), ...(k.planer || []), k.erstellerId]
                : (k.mitglieder || [])).filter(Boolean).forEach(u => s.add(u)));
@@ -491,11 +542,11 @@ function darfPlanen(k) {
   return istTeamPlaner(k) || (!istStern(k) && rechteVon(k).planen !== false);
 }
 function nurBuchen() {
-  return !istBetreiber() && profil.vollzugriff === false;
+  return !istBetreiber() && profil.vollzugriff !== true;
 }
 function darfBearbeiten(e) {
-  return istBetreiber() || e.ownerId === nutzer.uid ||
-    ((e.kreisIds || []).length === 1 && darfPlanen(kreisVon(e.kreisIds[0])) && !!kreisVon(e.kreisIds[0]));
+  return e.ownerId === nutzer.uid ||
+    ((e.kreisIds || []).length === 1 && istTeamPlaner(kreisVon(e.kreisIds[0])) && istStern(kreisVon(e.kreisIds[0])));
 }
 function passtZumPlan(e) {
   return planKreis ? (e.kreisIds || []).includes(planKreis) : !nurBuchen() &&
@@ -506,13 +557,13 @@ function passtZumPlan(e) {
    weder Wochenplan noch Aufgaben noch einen Plus-Knopf: für ihn ist
    die App eine Liste freier Zeiten, mehr soll sie auch nicht sein. */
 function richteOberflaecheEin() {
-  const schlank = nurBuchen();
+  const schlank = nurBuchen() && (!kreisVon(planKreis) || istStern(kreisVon(planKreis)));
   document.body.classList.toggle("schlank", schlank);
   [...$("nav").children].forEach((b) => {
     b.classList.toggle("versteckt", schlank && ["aufgaben", "fristen"].includes(b.dataset.v));
   });
   $("neuBtn").classList.toggle("versteckt", !darfPlanen(kreisVon(planKreis)));
-  $("findenBtn").classList.toggle("versteckt", schlank);
+  $("findenBtn").classList.toggle("versteckt", schlank || !kreisVon(planKreis));
   if (schlank) {
     if (["aufgaben", "fristen"].includes(ansicht)) { ansicht = "tag"; merke("ansicht", "tag"); }
     if (!planKreis && meineKreise.length) {
@@ -667,7 +718,7 @@ function fensterFuer(k, tag) {
 
   /* Ohne gepflegte Arbeitszeit gilt weiter, was bei jeder Art steht.
      Sonst wären ältere Orbits auf einmal leer. */
-  if (!(k.zeiten || []).length) {
+  if (!(k.zeiten || []).length && k.arbeitszeitenVersion !== 1) {
     arten.forEach((art) => {
       const plaetze = plaetzeVon(k, art);
       if (!(plaetze >= 1)) return;
@@ -685,7 +736,7 @@ function fensterFuer(k, tag) {
     if (artModus(art) === "fest") {
       mein = schnitt(rest, ohnePausenListe(k, tag, artZeiten(k, art, tag)));
     } else {
-      mein = rest;
+      mein = (art.tage?.length && !art.tage.includes(wochentag(tag))) ? [] : rest;
     }
     const plaetze = plaetzeVon(k, art);
     if (!(plaetze >= 1)) { rest = abzug(rest, mein); return; }
@@ -734,6 +785,7 @@ $("loginBtn").addEventListener("click", async () => {
 $("logoutBtn").addEventListener("click", () => signOut(auth));
 
 onAuthStateChanged(auth, async (user) => {
+  zusammen.stop(); abstimmungen = [];
   zeitStatusGeneration++;
   stopZeitStatus.forEach(stop => stop()); stopZeitStatus = []; zeitStatus = [];
   stopTeam.forEach((stop) => stop()); stopTeam = []; teamEintraege.clear();
@@ -756,6 +808,7 @@ onAuthStateChanged(auth, async (user) => {
   nutzer = user;
 
   profil = await ladeProfil();
+  if (!Object.keys(profil).length) profil = { vollzugriff: false, darfKreiseAnlegen: false, betaVersion: 17 };
   if (profil.aktiv === false) {
     await signOut(auth);
     $("loginFehler").textContent = t("gesperrt");
@@ -775,7 +828,7 @@ onAuthStateChanged(auth, async (user) => {
   await profilSichern();
   stopProfil = onSnapshot(doc(db, "users", nutzer.uid), (snap) => {
     if (!snap.exists()) return;
-    profil = snap.data();
+    profil = { vollzugriff: snap.data().betaVersion === 17 ? false : true, darfKreiseAnlegen: false, ...snap.data() };
     if (profil.aktiv === false && !istBetreiber()) { signOut(auth); return; }
     starteTeamEintraege();
     zeichne();
@@ -791,11 +844,12 @@ function starteAlles() {
   starteBelegt();
   startePost();
   starteEinladungen();
+  zusammen.start(list => { abstimmungen = list; zeichneAbstimmungen(); zeigePlanKontext(); });
   zeichne();
 }
 
-function istBetreiber() { return BETREIBER.includes((nutzer?.email || "").toLowerCase()); }
-function darfKreiseAnlegen() { return istBetreiber() || (!nurBuchen() && profil.darfKreiseAnlegen !== false); }
+function istBetreiber() { return nutzer?.emailVerified === true && BETREIBER.includes((nutzer?.email || "").toLowerCase()); }
+function darfKreiseAnlegen() { return istBetreiber() || (!nurBuchen() && profil.darfKreiseAnlegen === true); }
 function meinName() { return profil.name || nutzer.displayName || nutzer.email || "?"; }
 
 function zeigeAvatar() {
@@ -814,7 +868,7 @@ function zeigeAvatar() {
 async function ladeProfil() {
   try {
     const d = await getDoc(doc(db, "users", nutzer.uid));
-    return d.exists() ? d.data() : {};
+    return d.exists() ? { vollzugriff: d.data().betaVersion !== 17, darfKreiseAnlegen: false, ...d.data() } : {};
   } catch (e) { console.warn("Profil lesen:", e.code); return {}; }
 }
 
@@ -823,6 +877,7 @@ async function ladeProfil() {
 async function profilSichern() {
   try {
     await setDoc(doc(db, "users", nutzer.uid), {
+      ...(profil.betaVersion === 17 ? { betaVersion: 17 } : {}),
       name:     profil.name || "",
       photoURL: nutzer.photoURL || "",
       sprache:  holeSprache(),
@@ -912,6 +967,18 @@ async function einladungAnnehmen(ein) {
   // überhaupt jemand beitreten kann. Stattdessen arrayUnion: die
   // Datenbank hängt den Namen selbst an die Liste an, ohne dass die
   // App die Liste kennen muss.
+  if (ein.appEinladung) {
+    try {
+      await updateDoc(doc(db, 'users', nutzer.uid), {
+        vollzugriff: profil.vollzugriff === true || (ein.vollzugriff === true && !profil.adminSperren?.kalender),
+        darfKreiseAnlegen: profil.darfKreiseAnlegen === true || (ein.darfKreiseAnlegen === true && !profil.adminSperren?.orbits),
+        zugangEinladung: ein.id
+      });
+      await deleteDoc(doc(db, 'einladungen', ein.id));
+      zeichne();
+    } catch(error) { alert(buchungsFehler(error)); }
+    return;
+  }
   const kref = doc(db, "kreise", ein.kreisId);
   const alsVerwalter = !!ein.alsVerwalter;
   const offeneGruppe = (ein.art || "kreis") !== "stern";
@@ -931,7 +998,7 @@ async function einladungAnnehmen(ein) {
     batch.update(kref, neu);
     if (typeof ein.vollzugriff === "boolean") {
       batch.update(doc(db, "users", nutzer.uid), {
-        vollzugriff: ein.vollzugriff, darfKreiseAnlegen: ein.darfKreiseAnlegen === true && ein.vollzugriff, zugangEinladung: ein.id
+        vollzugriff: profil.vollzugriff === true || (ein.vollzugriff === true && !profil.adminSperren?.kalender), darfKreiseAnlegen: profil.darfKreiseAnlegen === true || (ein.darfKreiseAnlegen === true && !profil.adminSperren?.orbits), zugangEinladung: ein.id
       });
     }
     await batch.commit();
@@ -1120,7 +1187,7 @@ function starteZeitStatus() {
 
 function schreibeZeitStatus(writer, id, daten) {
   const zr = zeitraum(daten);
-  if (!zr || daten.typ !== "termin") return;
+  if (!zr || (daten.typ !== "termin" && !daten.ende)) return;
   (daten.teilnehmer || [daten.ownerId, ...(daten.zugewiesen || [])]).forEach(uid => {
     writer.set(doc(db, "zeitstatus", id + "_" + uid), { uid, eintragId: id, datum: daten.datum,
       von: zr.von, bis: zr.bis, token: daten.token || "privat~" + id,
@@ -1203,20 +1270,17 @@ function starteEintraege() {
     }
   );
 
-  stopGeteilte = onSnapshot(
-    istBetreiber() ? collection(db, "eintraege") : query(collection(db, "eintraege"), where("sichtbarFuer", "array-contains", nutzer.uid)),
-    (snap) => {
-      geteilte = snap.docs.map((x) => ({ id: x.id, ...x.data() }))
-                          .filter((e) => e.ownerId !== nutzer.uid);
-      zusammenfuehren();
-      zuweisungenSpiegeln();
-    },
-    (e) => {
-      console.warn("GETEILTE Einträge (nicht kritisch):", e.code, e.message);
-      geteilte = [];
-      zusammenfuehren();
-    }
-  );
+  const gruppen = new Map();
+  const zusammenfuehrenGeteilt = () => {
+    geteilte = [...new Map([...gruppen.values()].flat().filter(e => e.ownerId !== nutzer.uid).map(e => [e.id, e])).values()];
+    zusammenfuehren(); zuweisungenSpiegeln();
+  };
+  const stops = ['teilnehmer', 'zugewiesen'].map(field => onSnapshot(
+    query(collection(db, 'eintraege'), where(field, 'array-contains', nutzer.uid)),
+    snap => { gruppen.set(field, snap.docs.map(d => ({ id: d.id, ...d.data() }))); zusammenfuehrenGeteilt(); },
+    error => { console.warn('Geteilte Einträge:', error.code); gruppen.delete(field); zusammenfuehrenGeteilt(); }
+  ));
+  stopGeteilte = () => stops.forEach(stop => stop());
 }
 
 /* Einträge aus dem Import kennen sichtbarFuer und den Schattenkalender
@@ -1231,8 +1295,8 @@ async function nachruesteZeitStatus() {
     for (const e of offen) {
       const k = e.slotId ? kreisVon(e.kreisIds?.[0]) : null;
       if (e.slotId && !k) continue;
-      const teilnehmer = [...new Set([e.ownerId, ...(e.zugewiesen || []), ...(k ? [anbieterVon(k, (k.arten || []).find(a => a.name === e.artName))] : [])])];
-      const daten = { ...e, teilnehmer, zeitStatusVersion: 1 };
+      const teilnehmer = e.teilnehmer || [e.ownerId];
+      const daten = { ...e, teilnehmer: [e.ownerId], zeitStatusVersion: 1 };
       const batch = writeBatch(db);
       batch.update(doc(db, "eintraege", e.id), { teilnehmer, zeitStatusVersion: 1 });
       schreibeZeitStatus(batch, e.id, daten);
@@ -1381,6 +1445,7 @@ $("heuteBtn").addEventListener("click", () => {
 
 function zeichne() {
   if (!nutzer) return;
+  zeichneAbstimmungen();
   richteOberflaecheEin();
   [...$("nav").children].forEach((x) => x.classList.toggle("an", x.dataset.v === ansicht));
   zeigePlanKontext();
@@ -1432,14 +1497,17 @@ function zeigePlanKontext() {
   if (k && binVerwalter(k)) {
     const einstellen = el("button", "klein", t("kEinstellungen"));
     einstellen.type = "button";
-    einstellen.addEventListener("click", () => oeffneEinstellungen(k));
+    einstellen.addEventListener("click", () => {
+      if (istStern(k)) oeffneEinstellungen(k);
+      else { zeigeKreise(); $("dlgKreise").showModal(); }
+    });
     werkzeuge.appendChild(einstellen);
   }
   const eintraege = meineEintraege.filter(passtZumPlan);
   const zahlen = [
     [eintraege.filter((e) => e.typ === "termin" && laeuftAnTag(e, heute())).length, "termineHeute"],
     [k ? (k.mitglieder || []).length : meineKreise.length, k ? "mitgliederZahl" : "gruppenZahl"],
-    [k ? fensterFuer(k, anker).filter((f) => darfTerminart(k, f.art) && !zeitKonflikt(k, anker, f) && freiePlaetze(f, slots.filter((s) => s.kreisId === k.id && s.datum === anker)) > 0).length : eintraege.filter((e) => e.typ === "task" && !erledigtAm(e, heute())).length, k ? "freieZeitenTag" : "offeneAufgaben"]
+    [k && istStern(k) ? fensterFuer(k, anker).filter((f) => darfTerminart(k, f.art) && !zeitKonflikt(k, anker, f) && freiePlaetze(f, slots.filter((s) => s.kreisId === k.id && s.datum === anker)) > 0).length : k ? abstimmungen.filter(a => a.kreisId === k.id && ['pending', 'ready'].includes(a.phase)).length : eintraege.filter((e) => e.typ === "task" && !erledigtAm(e, heute())).length, k ? istStern(k) ? "freieZeitenTag" : "wfOffen" : "offeneAufgaben"]
   ];
   const box = $("planZahlen"); box.innerHTML = "";
   zahlen.forEach(([zahl, label]) => {
@@ -1448,7 +1516,12 @@ function zeigePlanKontext() {
     box.appendChild(karte);
   });
 }
-$("kontextNeu").addEventListener("click", () => oeffneEintrag(null, anker));
+function neuerKontextEintrag() {
+  const k = kreisVon(planKreis);
+  if (k && !istStern(k)) $("findenBtn").click();
+  else oeffneEintrag(null, anker);
+}
+$("kontextNeu").addEventListener("click", neuerKontextEintrag);
 
 /* ===================================================================
    SEITENLEISTE (nur am Schreibtisch sichtbar)
@@ -1598,6 +1671,7 @@ function leerKasten(zeichen, text) {
   return d;
 }
 function farbeVon(e) {
+  if (e.farbe) return e.farbe;
   const k = meineKreise.find((k) => (e.kreisIds || []).includes(k.id));
   return k ? k.farbe : null;
 }
@@ -1717,6 +1791,7 @@ function setzeBalken(knopf, x, g) {
 }
 
 function balkenFarbe(e) {
+  if (e.farbe) return e.farbe;
   if (e.typ === "task") return "var(--gruen)";
   return farbeVon(e) || "var(--akzent)";
 }
@@ -2144,6 +2219,8 @@ function jetztLinie(g) {
    nie mehr Leute auf einer Tour landen, als vorgesehen sind.           */
 
 function buchungsFehler(error) {
+  if (error.code === 'changed-request') return textNeu('Die Anfrage wurde geändert. Bitte prüfe den neuen Vorschlag.', 'تم تعديل الطلب. يرجى مراجعة الاقتراح الجديد.');
+  if (error.code === 'too-many-locks') return textNeu('Für diese gemeinsame Reservierung sind es zu viele Zeitblöcke. Wähle eine kürzere Dauer oder weniger Beteiligte.', 'عدد الفترات الزمنية كبير. اختر مدة أقصر أو مشاركين أقل.');
   if (error.code === "series-too-long" || error.code === "series-too-large") return t("serieZuGross");
   if (["full", "already-booked", "changed-session", "time-conflict"].includes(error.code)) return t("slBelegt");
   return t("eSpeichern", { code: error.code || error.message });
@@ -2167,7 +2244,7 @@ function geplanterBatch() {
 
 function schreibeZeitSperren(writer, id, daten) {
   const zr = zeitraum(daten);
-  if (!zr || daten.typ !== "termin") return;
+  if (!zr) return;
   const personen = daten.teilnehmer || [...new Set([daten.ownerId, ...(daten.zugewiesen || [])])];
   const tage = [];
   const bis = istSerie(daten) ? daten.serie.bis : daten.datum;
@@ -2185,7 +2262,7 @@ function schreibeZeitSperren(writer, id, daten) {
 
 function entferneZeitSperren(writer, id, daten) {
   const zr = zeitraum(daten);
-  if (!zr || daten.typ !== "termin" || !daten.sperrenVersion) return;
+  if (!zr || !daten.sperrenVersion) return;
   const personen = daten.teilnehmer || [...new Set([daten.ownerId, ...(daten.zugewiesen || [])])];
   const bis = istSerie(daten) ? daten.serie.bis : daten.datum;
   for (let tag = daten.datum; tag <= bis; tag = plus(tag, 1)) {
@@ -2194,27 +2271,34 @@ function entferneZeitSperren(writer, id, daten) {
   }
 }
 
-export async function reserviereTermin(k, tag, f, participant, zuweisen = false, verschiebe = null, details = null) {
-  if (verschiebe && (!darfPlanen(k) || verschiebe.kreisIds?.[0] !== k.id)) throw new BookingError("permission-denied");
+export async function reserviereTermin(k, tag, f, participant, zuweisen = false, verschiebe = null, details = null, approvalId = "") {
+  if (verschiebe && !approvalId && verschiebe.participantUid !== nutzer.uid) throw new BookingError('consent-required');
+  if (verschiebe && ((!darfPlanen(k) && !approvalId) || verschiebe.kreisIds?.[0] !== k.id)) throw new BookingError("permission-denied");
   if (!darfTerminart(k, f.art, participant)) throw new BookingError("permission-denied");
   // Refresh legacy busy entries before claiming. Locks below arbitrate concurrent writes.
   const frisch = await getDocs(query(collection(db, "belegt"), where("sichtbarFuer", "array-contains", nutzer.uid)));
   const events = [...meineEintraege, ...frisch.docs.map(d => ({ id: d.id, ...d.data() }))];
   if (zeitKonflikt(k, tag, f, participant, events, verschiebe?.id || "")) throw new BookingError("time-conflict");
   const provider = anbieterVon(k, f.art), sessionId = sitzungsId(k, tag, f);
+  const executorUid = provider === '' ? (details?.executorUid || verschiebe?.executorUid || '') : '';
   const ref = doc(collection(db, "eintraege"));
   const sessionRef = doc(db, "sitzungen", sessionId);
   const daten = {
-    ownerId: nutzer.uid, typ: "termin", titel: f.art.name, artName: f.art.name,
+    ownerId: nutzer.uid, typ: "termin", titel: f.art.name, artName: f.art.name, farbe: f.art.farbe || k.farbe || "#818cf8",
     datum: tag, start: ausMinuten(f.von), ende: ausMinuten(f.bis), von: f.von, bis: f.bis, dauer: f.bis - f.von,
     frist: "", ort: f.art.ort || "", notiz: "", wiederholung: "einmal",
     kreisIds: [k.id], zugewiesen: zuweisen ? [participant] : [], zusagen: {},
-    participantUid: participant, providerUid: provider, teilnehmer: [...new Set([provider, participant])],
+    participantUid: participant, providerUid: provider, executorUid, approvalId, teilnehmer: [...new Set([provider, participant, executorUid].filter(Boolean))],
     sichtbarFuer: [...new Set([provider, participant, nutzer.uid, ...(k.verwalter || []), ...(k.planer || [])])],
     sessionId, status: "", suchtext: f.art.name.toLowerCase(), erstelltAm: serverTimestamp()
   };
   if (details) Object.assign(daten, { titel: details.titel, ort: details.ort, notiz: details.notiz, suchtext: [details.titel, details.ort, details.notiz].join(" ").toLowerCase() });
   await runTransaction(db, async transaction => {
+    if (approvalId) {
+      const approval = await transaction.get(doc(db, 'abstimmungen', approvalId));
+      const a = approval.data();
+      if (!approval.exists() || a.phase !== 'ready' || a.entryId !== verschiebe?.id || a.daten.datum !== tag || a.daten.start !== ausMinuten(f.von) || a.daten.ende !== ausMinuten(f.bis)) throw new BookingError('permission-denied');
+    }
     const oldSession = verschiebe ? await transaction.get(doc(db, "sitzungen", verschiebe.sessionId)) : null;
     const oldEntry = verschiebe ? await transaction.get(doc(db, "eintraege", verschiebe.id)) : null;
     if (verschiebe && (!oldEntry.exists() || !oldSession.exists() || verschiebe.sessionId === sessionId)) throw new BookingError("changed-session");
@@ -2230,6 +2314,7 @@ export async function reserviereTermin(k, tag, f, participant, zuweisen = false,
     if (index < 0) throw new BookingError("full");
     daten.slotId = seatRefs[index].id;
     if (verschiebe) schreibeBuchungsFreigabe(transaction, { id: verschiebe.id, ...oldEntry.data() }, oldSession.data(), true);
+    if (approvalId) transaction.update(doc(db, "abstimmungen", approvalId), { phase: "confirmed", newEntryId: ref.id });
     transaction.set(sessionRef, next);
     transaction.set(seatRefs[index], { kreisId: k.id, datum: tag, start: daten.start, platz: index + 1,
       dauer: daten.dauer, artName: daten.artName, uid: nutzer.uid, participantUid: participant,
@@ -2240,7 +2325,7 @@ export async function reserviereTermin(k, tag, f, participant, zuweisen = false,
       start: daten.start, ende: daten.ende, dauer: daten.dauer, wiederholung: "einmal",
       sessionId, providerUid: provider, participantUid: participant, teilnehmer: daten.teilnehmer,
       sichtbarFuer: [...new Set([...belegtFuerListe(), ...daten.sichtbarFuer])] });
-    const lockPeople = old ? [participant].filter(uid => uid !== provider) : daten.teilnehmer;
+    const lockPeople = old ? [...new Set([participant, executorUid].filter(uid => uid && uid !== provider))] : daten.teilnehmer;
     lockPeople.forEach(uid => lockKeys(uid, tag, f.von, f.bis).forEach(kennung => transaction.set(doc(db, "zeitsperren", kennung), {
       uid, datum: tag, minute: Number(kennung.split("_").at(-1)), sessionId, kreisId: k.id,
       entryId: uid === provider ? "" : ref.id
@@ -2258,8 +2343,29 @@ function schreibeBuchungsFreigabe(transaction, current, session, manage) {
   transaction.delete(doc(db, "slots", current.slotId));
   entferneZeitStatus(transaction, current.id, current);
   const zr = zeitraum(current);
-  const personen = next ? [current.participantUid].filter(uid => uid !== current.providerUid) : current.teilnehmer;
+  const personen = next ? current.teilnehmer.filter(uid => uid !== current.providerUid) : current.teilnehmer;
   personen.forEach(uid => lockKeys(uid, current.datum, zr.von, zr.bis).forEach(id => transaction.delete(doc(db, "zeitsperren", id))));
+}
+
+export async function weiseTourZu(e, executorUid) {
+  const k = kreisVon(e.kreisIds?.[0]);
+  if (!k || !darfPlanen(k) || e.providerUid !== '' || (executorUid && !k.mitglieder.includes(executorUid))) throw new BookingError('permission-denied');
+  await runTransaction(db, async tx => {
+    const snapshot = await tx.get(doc(db, 'eintraege', e.id));
+    if (!snapshot.exists()) throw new BookingError('missing-booking');
+    const current = { id: e.id, ...snapshot.data() };
+    if (current.providerUid !== '') throw new BookingError('changed-session');
+    const next = { ...current, executorUid, teilnehmer: [...new Set([current.participantUid, executorUid].filter(Boolean))] };
+    if (current.executorUid && current.executorUid !== current.participantUid) {
+      lockKeys(current.executorUid, current.datum, current.von, current.bis).forEach(id => tx.delete(doc(db, 'zeitsperren', id)));
+    }
+    tx.update(doc(db, 'eintraege', e.id), { executorUid, teilnehmer: next.teilnehmer });
+    if (executorUid && executorUid !== current.participantUid) lockKeys(executorUid, current.datum, current.von, current.bis).forEach(id => tx.set(doc(db, 'zeitsperren', id), {
+      uid: executorUid, datum: current.datum, minute: Number(id.split('_').at(-1)), sessionId: current.sessionId, kreisId: k.id, entryId: e.id
+    }));
+    entferneZeitStatus(tx, e.id, current); schreibeZeitStatus(tx, e.id, next);
+    tx.update(doc(db, 'belegt', e.id), { teilnehmer: next.teilnehmer });
+  });
 }
 
 export async function storniereBuchung(e) {
@@ -2717,7 +2823,8 @@ async function loescheEintrag(e) {
   const frage = t(istSerie(e) ? "eSerieLoeschen" : "eLoeschenFrage", { titel: e.titel });
   if (!confirm(frage)) return false;
   try {
-    if (e.sessionId) await storniereBuchung(e);
+    if (e.workflowId) await zusammen.withdraw(e.workflowId);
+    else if (e.sessionId) await storniereBuchung(e);
     else {
       const b = geplanterBatch();
       entferneZeitSperren(b, e.id, e);
@@ -2780,10 +2887,12 @@ function sucheAusfuehren() {
    =================================================================== */
 
 function setzeTyp(neu) {
+  const vorher = typ;
   typ = neu;
   $("typTermin").classList.toggle("an", neu === "termin");
   $("typTask").classList.toggle("an", neu === "task");
-  $("endeFeld").classList.toggle("versteckt", neu !== "termin");
+  $("endeFeld").classList.remove("versteckt");
+  if (neu === "task" && vorher !== "task") { $("fStart").value = ""; $("fEnde").value = ""; }
   $("fristFeld").classList.toggle("versteckt", neu !== "task");
   $("lblStart").textContent = neu === "termin" ? t("fVon") : t("fUhrzeitOpt");
   setzeLabelDatum();
@@ -2909,7 +3018,7 @@ function naechsteStunde() {
   return String(d.getHours()).padStart(2, "0") + ":00";
 }
 
-function oeffneEintrag(e, tag) {
+async function oeffneEintrag(e, tag) {
   if (e?.sessionId && !darfPlanen(kreisVon(e.kreisIds?.[0]))) { zeigeBuchung(e, tag); return; }
   /* Wer nur bucht, braucht kein Formular mit Serien und Zuweisen.
      Für ihn hat ein eigener Termin genau eine Frage: behalten oder
@@ -2935,6 +3044,14 @@ function oeffneEintrag(e, tag) {
   $("fFrist").value = e ? (e.frist || "") : "";
   $("fOrt").value   = e ? (e.ort   || "") : "";
   $("fNotiz").value = e ? (e.notiz || "") : "";
+  const tour = !!e?.sessionId && e.providerUid === '';
+  $("executorFeld").classList.toggle("versteckt", !tour);
+  $("fExecutor").replaceChildren();
+  if (tour) {
+    const empty = el('option', null, textNeu('Noch nicht zugewiesen', 'لم يتم التعيين بعد')); empty.value = ''; $("fExecutor").append(empty);
+    for (const uid of kreis.mitglieder || []) { const option = el('option', null, vorname(uid)); option.value = uid; $("fExecutor").append(option); }
+    $("fExecutor").value = e.executorUid || '';
+  }
 
   const s = e && e.serie ? e.serie : null;
   gewaehlteTage = s && Array.isArray(s.wochentage) ? [...s.wochentage] : [];
@@ -2947,6 +3064,11 @@ function oeffneEintrag(e, tag) {
 
   gewaehlteKreise   = e ? [...(e.kreisIds   || [])] : (planKreis ? [planKreis] : []);
   gewaehltePersonen = e ? [...(e.zugewiesen || [])] : [];
+  if (e?.workflowId) {
+    const request = await getDoc(doc(db, 'abstimmungen', e.workflowId));
+    if (!request.exists()) return;
+    gewaehltePersonen = request.data().teilnehmer.filter(uid => uid !== nutzer.uid);
+  }
   zeigeTeilenWahl();
   zeigeZuweisenWahl();
   const details = !!e?.sessionId;
@@ -2966,7 +3088,7 @@ function oeffneEintrag(e, tag) {
   $("dlgEintrag").scrollTop = 0;
 }
 
-$("neuBtn").addEventListener("click", () => oeffneEintrag(null, anker));
+$("neuBtn").addEventListener("click", neuerKontextEintrag);
 $("abbrechen").addEventListener("click", () => $("dlgEintrag").close());
 
 $("eintragLoeschenBtn").addEventListener("click", async () => {
@@ -3030,7 +3152,8 @@ $("formEintrag").addEventListener("submit", async (ev) => {
 
   if (!titel || !datum) return fehler("eTitelDatum");
   if (typ === "termin" && !start) return fehler("eStartzeit");
-  if (typ === "termin" && ende && ende <= start) return fehler("eEnde");
+  if (ende && (!start || ende <= start)) return fehler("eEnde");
+  if (typ === "task" && start && !ende) return fehler("eEnde");
   if (typ === "task" && frist && frist < datum) return fehler("eFrist");
   if (wiederholung === "serie") {
     if (!gewaehlteTage.length) return fehler("eWochentag");
@@ -3046,13 +3169,14 @@ $("formEintrag").addEventListener("submit", async (ev) => {
     if (!darfPlanen(kreisVon(alt.kreisIds?.[0]))) return fehler("rechteFehlen");
     try {
       if (datum === alt.datum && start === alt.start && ende === alt.ende && gewaehlteArt === alt.artName) {
+        if (alt.providerUid === '' && $("fExecutor").value !== (alt.executorUid || '')) await weiseTourZu(alt, $("fExecutor").value);
         await updateDoc(doc(db, "eintraege", alt.id), { titel, ort, notiz, suchtext: [titel, ort, notiz].join(" ").toLowerCase() });
       } else {
         const k = kreisVon(alt.kreisIds[0]);
         const f = fensterFuer(k, datum).find(x => x.art.name === gewaehlteArt && x.von === minuten(start) && x.bis === minuten(ende));
         if (!f) return fehler("serviceRasterNutzen");
-        const result = await reserviereTermin(k, datum, f, alt.participantUid, true, alt, { titel, ort, notiz });
-        meldeZugewiesen(result.titel, [alt.participantUid], result.id);
+        await zusammen.service(alt, { titel, ort, notiz, datum, start, ende, artName: gewaehlteArt, typ: "termin" });
+        melde(textNeu("Verschiebung angefragt", "تم إرسال طلب تغيير الموعد"));
       }
       $("dlgEintrag").close();
     } catch (error) { $("formFehler").textContent = buchungsFehler(error); }
@@ -3074,7 +3198,7 @@ $("formEintrag").addEventListener("submit", async (ev) => {
     ownerId: alt ? alt.ownerId : nutzer.uid,
     typ, titel, datum,
     start: start || "",
-    ende:  typ === "termin" ? (ende || "") : "",
+    ende: ende || "",
     dauer: dauer > 0 ? dauer : 0,
     frist: typ === "task" ? (frist || "") : "",
     ort, notiz, wiederholung, kreisIds, zugewiesen, zusagen,
@@ -3083,13 +3207,13 @@ $("formEintrag").addEventListener("submit", async (ev) => {
     suchtext: [titel, notiz, ort].join(" ").toLowerCase().trim()
   };
   daten.teilnehmer = [...new Set([daten.ownerId, ...zugewiesen])];
-  daten.sperrenVersion = typ === "termin" ? 1 : 0;
-  daten.zeitStatusVersion = typ === "termin" ? 1 : 0;
+  daten.sperrenVersion = start && ende ? 1 : 0;
+  daten.zeitStatusVersion = start && ende ? 1 : 0;
 
   const schatten = {
     ownerId: alt ? alt.ownerId : nutzer.uid, typ, datum,
     start: start || "",
-    ende: typ === "termin" ? (ende || "") : "",
+    ende: ende || "",
     dauer: daten.dauer, wiederholung,
     teilnehmer: daten.teilnehmer, sichtbarFuer: [...new Set([...belegtFuerListe(), ...zugewiesen])]
   };
@@ -3123,6 +3247,21 @@ $("formEintrag").addEventListener("submit", async (ev) => {
     return fehler("serviceRasterNutzen");
   }
 
+  const offen = kreisIds.length === 1 && kreisVon(kreisIds[0]) && !istStern(kreisVon(kreisIds[0]));
+  if (zugewiesen.length && !offen && !exk && !alt?.workflowId) {
+    $("formFehler").textContent = textNeu('Wähle für den gemeinsamen Termin einen offenen Orbit.', 'اختر مجموعة مفتوحة للموعد المشترك.'); return;
+  }
+  if (alt?.workflowId || (offen && zugewiesen.length)) {
+    if (alt && !alt.workflowId) { $("formFehler").textContent = textNeu('Dieser ältere gemeinsame Eintrag verwendet noch das bisherige Modell. Erstelle eine neue gemeinsame Anfrage, statt ihn zu verschieben.', 'هذا الموعد المشترك القديم يستخدم النموذج السابق. أنشئ طلباً مشتركاً جديداً بدلاً من نقله.'); return; }
+    if (wiederholung !== 'einmal') { $("formFehler").textContent = textNeu('Gemeinsame Anfragen zunächst als einzelnen Termin erstellen.', 'يرجى إنشاء طلب مشترك لموعد واحد.'); return; }
+    try {
+      if (alt?.workflowId) await zusammen.shift(alt.workflowId, daten);
+      else await zusammen.create(kreisVon(kreisIds[0]), daten, [nutzer.uid, ...zugewiesen]);
+      $("dlgEintrag").close();
+      melde(textNeu('Anfrage gesendet – noch keine Zeit reserviert.', 'تم إرسال الطلب دون حجز الوقت بعد.'));
+    } catch(error) { $("formFehler").textContent = buchungsFehler(error); }
+    return;
+  }
   try {
     let id = bearbeiteId;
     if (bearbeiteId) {
@@ -3233,7 +3372,7 @@ function zeigeKreise() {
       kopf.appendChild(sb);
     }
 
-    if (verwalter) {
+    if (verwalter && stern) {
       const eb = el("button", "klein", t("kEinstellungen"));
       eb.type = "button";
       eb.addEventListener("click", () => oeffneEinstellungen(k));
@@ -3391,13 +3530,24 @@ function zeigeKreise() {
   });
 }
 
-$("formOrbitNeu").addEventListener("submit", (ev) => {
+$("formOrbitNeu").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   $("kreisFehler").textContent = "";
   if (!darfKreiseAnlegen()) { $("kreisFehler").textContent = t("kDarfNicht"); return; }
   const name = $("kName").value.trim();
   if (!name) { $("kreisFehler").textContent = t("kNameFehlt"); return; }
   $("dlgOrbitNeu").close();
+  if (neueArt !== "stern") {
+    try {
+      const data = { name, farbe: neueFarbe, art: neueArt, erstellerId: nutzer.uid,
+        mitglieder: [nutzer.uid], verwalter: [nutzer.uid], planer: [], rechte: {},
+        info: { [nutzer.uid]: meinSteckbrief() }, erstelltAm: serverTimestamp() };
+      const target = await addDoc(collection(db, "kreise"), data);
+      planKreis = target.id; merke("planKreis", planKreis); $("dlgKreise").close();
+      zeichne();
+    } catch (error) { alert(t("eSpeichern", { code: error.code || error.message })); }
+    return;
+  }
   oeffneEinstellungen({ name, farbe: neueFarbe, art: neueArt, arten: [], pausen: [],
     zeiten: [{ tage: [0, 1, 2, 3, 4], von: "09:00", bis: "17:00" }] });
 });
@@ -3476,6 +3626,7 @@ function setzeArtModus(wert) {
   $("eModusFest").classList.toggle("an", einstModus === "fest");
   $("eModusRest").classList.toggle("an", einstModus === "rest");
   $("eArtZeitFeld").classList.toggle("versteckt", einstModus === "rest");
+  $("eArtAlleWahl").classList.toggle("versteckt", einstModus !== "rest");
 }
 $("eModusFest").addEventListener("click", () => setzeArtModus("fest"));
 $("eModusRest").addEventListener("click", () => setzeArtModus("rest"));
@@ -3499,7 +3650,7 @@ function blockMeldung(id, text, gut) {
    sie nichts übrig. Dann steht sie zwar in der Liste, taucht im Plan
    aber nie auf. Das soll man hier sehen, nicht erst nächste Woche. */
 function artBekommtZeit(a) {
-  const probe = { id: "probe", arten: einstArten, zeiten: einstZeiten, pausen: einstPausen };
+  const probe = { id: "probe", arten: einstArten, zeiten: einstZeiten, pausen: einstPausen, arbeitszeitenVersion: 1 };
   for (let i = 0; i < 7; i++) {
     const tag = plus(heute(), i);
     if (fensterFuer(probe, tag).some((x) => x.art === a)) return true;
@@ -3543,6 +3694,9 @@ function zeigeArtenListe() {
     bearbeiten.addEventListener("click", () => {
       bearbeiteArt = i;
       $("eArtName").value = a.name;
+      $("eArtFarbe").value = a.farbe || einstKreis.farbe || "#818cf8";
+      $("eArtAlle").checked = !(a.tage || []).length;
+      $("eArtBelegung").value = a.belegung || "gemeinsam";
       $("eArtDauer").value = a.dauer;
       $("eArtPlaetze").value = a.plaetze;
       $("eArtProvider").value = a.providerUid || einstKreis.erstellerId || nutzer.uid;
@@ -3588,9 +3742,9 @@ function uebernehmeArt() {
   if (einstArten.some((a, i) => i !== bearbeiteArt && a.name.toLowerCase() === name.toLowerCase())) {
     blockMeldung("artMeldung", t("kArtNameDoppelt")); return false;
   }
-  const art = { name, dauer, plaetze, providerUid: $("eArtProvider").value || einstKreis.erstellerId || nutzer.uid,
+  const art = { name, dauer, plaetze, farbe: $("eArtFarbe").value, belegung: $("eArtBelegung").value, providerUid: $("eArtProvider").value || einstKreis.erstellerId || nutzer.uid,
     ort: $("eArtOrt").value.trim(), modus: fest ? "fest" : "rest",
-    tage: fest ? [...einstArtTage].sort((a, b) => a - b) : [], von: fest ? von : "", bis: fest ? bis : "" };
+    tage: fest || !$("eArtAlle").checked ? [...einstArtTage].sort((a, b) => a - b) : [], von: fest ? von : "", bis: fest ? bis : "" };
   if (bearbeiteArt >= 0) einstArten[bearbeiteArt] = art;
   else einstArten.push(art);
   einstArten.sort((a, b) => Number(artModus(a) === "rest") - Number(artModus(b) === "rest"));
@@ -3685,8 +3839,8 @@ async function speichereEinstellungen(schliessen) {
   if (!uebernehmeArt()) return;
   einstSpeichert = true;
   $("einstSpeichern").disabled = $("artHinzu").disabled = true;
-  const daten = { arten: einstArten, angebote: Object.fromEntries(einstArten.map(a => [a.name, {
-    plaetze: a.plaetze, dauer: a.dauer, providerUid: a.providerUid || einstKreis.erstellerId || nutzer.uid
+  const daten = { arbeitszeitenVersion: 1, arten: einstArten, angebote: Object.fromEntries(einstArten.map(a => [a.name, {
+    plaetze: a.plaetze, dauer: a.dauer, providerUid: a.belegung === "parallel" ? "" : a.providerUid || einstKreis.erstellerId || nutzer.uid
   }])), zeiten: einstZeiten, pausen: einstPausen };
   try {
     if (einstKreis.id) await updateDoc(doc(db, "kreise", einstKreis.id), daten);
@@ -3737,9 +3891,11 @@ async function oeffneRechte(k, uid = "") {
   $("ePlaner").checked = uid ? (k.planer || []).includes(uid) || (!istStern(k) && r.planen !== false) : !istStern(k);
   $("eEinladen").checked = r.einladen === true;
   ["eVerwalter", "ePlaner", "eEinladen"].forEach(id => $(id).disabled = !binVerwalter(k));
-  $("eVollzugriff").checked = uid ? konto.vollzugriff !== false : !istStern(k);
-  $("eKreiseAnlegen").checked = uid ? konto.darfKreiseAnlegen !== false : !istStern(k);
-  $("vollzugriffWahl").classList.toggle("versteckt", !istBetreiber());
+  $("eVollzugriff").checked = uid ? (konto.vollzugriff ?? konto.betaVersion !== 17) : false;
+  $("eKreiseAnlegen").checked = uid ? konto.darfKreiseAnlegen === true : false;
+  $("vollzugriffWahl").classList.toggle("versteckt", !binVerwalter(k) || (!!uid && !istBetreiber()));
+  $("ePlanenMit").value = r.planenMit || "alle";
+  $("ePersonenMit").replaceChildren(...(k.mitglieder || []).map(uid => { const option = el("option", null, vorname(uid)); option.value = uid; option.selected = (r.personen || []).includes(uid); return option; }));
   $("eTerminarten").replaceChildren();
   (k.arten || []).filter(a => plaetzeVon(k, a) >= 1).forEach(a => {
     const label = el("label", "schalter"); const checkbox = el("input"); checkbox.type = "checkbox";
@@ -3765,7 +3921,7 @@ $("formEinladen").addEventListener("submit", async (ev) => {
     $("einladenFehler").textContent = t("eiSchonDrin"); return;
   }
   try {
-    const rechte = { einladen: binVerwalter(einladenKreis) && $("eEinladen").checked,
+    const rechte = { planenMit: $("ePlanenMit").value, personen: [...$("ePersonenMit").selectedOptions].map(option => option.value), einladen: binVerwalter(einladenKreis) && $("eEinladen").checked,
       planen: binVerwalter(einladenKreis) && $("ePlaner").checked,
       terminarten: [...$("eTerminarten").querySelectorAll("input:checked")].filter(input => !input.disabled).map(input => input.value) };
     if (rechteMitglied) {
@@ -3775,7 +3931,8 @@ $("formEinladen").addEventListener("submit", async (ev) => {
         verwalter: [...(k.verwalter || []).filter(u => u !== uid), ...($("eVerwalter").checked ? [uid] : [])],
         planer: [...(k.planer || []).filter(u => u !== uid), ...($("ePlaner").checked ? [uid] : [])] });
       if (istBetreiber()) batch.update(doc(db, "users", uid), {
-        vollzugriff: $("eVollzugriff").checked, darfKreiseAnlegen: $("eVollzugriff").checked && $("eKreiseAnlegen").checked });
+        vollzugriff: $("eVollzugriff").checked, darfKreiseAnlegen: $("eKreiseAnlegen").checked,
+        "adminSperren.kalender": !$("eVollzugriff").checked, "adminSperren.orbits": !$("eKreiseAnlegen").checked });
       await batch.commit();
       if (istStern(k) && !$("ePlaner").checked && !$("eVerwalter").checked) await entziehePlanEinsicht(k, uid);
       $("dlgEinladen").close(); return;
@@ -3787,8 +3944,8 @@ $("formEinladen").addEventListener("submit", async (ev) => {
       vonUid: nutzer.uid, vonName: meinName(),
       alsVerwalter: binVerwalter(einladenKreis) && $("eVerwalter").checked,
       alsPlaner: binVerwalter(einladenKreis) && $("ePlaner").checked, rechte,
-      ...(istBetreiber() ? { vollzugriff: $("eVollzugriff").checked,
-        darfKreiseAnlegen: $("eVollzugriff").checked && $("eKreiseAnlegen").checked } : {}),
+      ...(binVerwalter(einladenKreis) ? { vollzugriff: $("eVollzugriff").checked,
+        darfKreiseAnlegen: $("eKreiseAnlegen").checked } : {}),
       erstelltAm: serverTimestamp()
     });
     $("einladenGut").textContent = t("eiErfolg", { mail });
@@ -3924,7 +4081,7 @@ function einladungsKarte(ein) {
   kopf.appendChild(el("span", "wann", t("eiOffen")));
   k.appendChild(kopf);
   k.appendChild(el("div", "text",
-    t("eiFrage", { name: ein.vonName || t("nJemand"), kreis: ein.kreisName || "" })));
+    ein.appEinladung ? textNeu('Einladung zur App: Du musst keinem Orbit beitreten.', 'دعوة إلى التطبيق دون الانضمام إلى مجموعة.') : t("eiFrage", { name: ein.vonName || t("nJemand"), kreis: ein.kreisName || "" })));
   if (ein.alsVerwalter) k.appendChild(el("div", "wann", t("kEingeladenVerw")));
 
   const knoepfe = el("div", "knoepfe");
@@ -4008,6 +4165,15 @@ function zeigePost() {
 
 let findenPersonenWahl = [];
 let findenDauer = 60;
+$("findenAufgabe").addEventListener("click", async () => {
+  const k = kreisVon(planKreis), people = [nutzer.uid, ...findenPersonenWahl];
+  if (!k || istStern(k) || !findenPersonenWahl.length || !canMeet(k, people)) {
+    $("findenFehler").textContent = textNeu('Wähle zuerst die beteiligten Personen.', 'اختر الأشخاص المشاركين أولاً.'); return;
+  }
+  $("dlgFinden").close(); await oeffneEintrag(null, anker); setzeTyp('task');
+  $("fStart").value = $("fEnde").value = '';
+  gewaehlteKreise = [k.id]; gewaehltePersonen = [...findenPersonenWahl]; zeigeTeilenWahl(); zeigeZuweisenWahl();
+});
 
 function baueDauerWahl() {
   const box = $("fvDauerWahl");
@@ -4034,7 +4200,8 @@ $("findenBtn").addEventListener("click", () => {
 
   const box = $("findenPersonen");
   box.innerHTML = "";
-  const andere = sichtbarePersonen();
+  const selectedOrbit = kreisVon(planKreis);
+  const andere = selectedOrbit ? participantsFor(selectedOrbit, nutzer.uid).filter(uid => uid !== nutzer.uid) : sichtbarePersonen();
   if (!andere.length) box.appendChild(el("div", "hinweis", t("tfNiemand")));
   andere.forEach((uid) => {
     const info = alleNutzer[uid] || {};
@@ -4066,6 +4233,8 @@ $("findenStart").addEventListener("click", async () => {
   if (tageBis(bis, von) > 60) return raus("tfZuLang");
 
   const wer = [nutzer.uid, ...findenPersonenWahl];
+  const selectedOrbit = kreisVon(planKreis);
+  if (selectedOrbit && !canMeet(selectedOrbit, wer)) return raus("rechteFehlen");
   let belegt;
   try {
     const snap = await getDocs(
@@ -4109,7 +4278,7 @@ $("findenStart").addEventListener("click", async () => {
       $("fDatum").value = l.tag;
       $("fStart").value = ausMinuten(l.von);
       $("fEnde").value = ausMinuten(Math.min(l.von + findenDauer, l.bis));
-      gewaehlteKreise = meineKreise
+      gewaehlteKreise = selectedOrbit ? [selectedOrbit.id] : meineKreise
         .filter((k) => findenPersonenWahl.every((u) => (k.mitglieder || []).includes(u)))
         .slice(0, 1).map((k) => k.id);
       gewaehltePersonen = [...findenPersonenWahl];
@@ -4454,6 +4623,18 @@ $("betriebBtn").addEventListener("click", async () => {
   await ladeBetrieb();
 });
 $("betriebZu").addEventListener("click", () => $("dlgBetrieb").close());
+$("appEinladen").addEventListener("submit", async event => {
+  event.preventDefault();
+  if (!istBetreiber()) return;
+  const email = $("appMail").value.trim().toLowerCase();
+  try {
+    await setDoc(doc(db, "einladungen", "app_" + email), {
+      email, vonUid: nutzer.uid, appEinladung: true, vollzugriff: $("appPrivat").checked,
+      darfKreiseAnlegen: $("appOrbits").checked, erstelltAm: serverTimestamp()
+    });
+    $("appEinladungMeldung").textContent = textNeu('Einladung gespeichert. Die Person meldet sich mit dieser Google-Adresse an.', 'تم حفظ الدعوة. يسجل الشخص الدخول بحساب Google المذكور.');
+  } catch (error) { $("appEinladungMeldung").textContent = buchungsFehler(error); }
+});
 
 async function ladeBetrieb() {
   const tab = $("betriebTabelle"), zb = $("betriebZahlen"), kb = $("betriebKreise");
@@ -4516,14 +4697,14 @@ async function ladeBetrieb() {
       tdS.appendChild(sb);
       tr.appendChild(tdS);
 
-      const darf = u.darfKreiseAnlegen !== false;
+      const darf = u.darfKreiseAnlegen === true;
       const tdK = el("td");
       const kbn = el("button", "klein", darf ? t("bJa") : t("bNein"));
       kbn.type = "button";
       kbn.addEventListener("click", async () => {
         kbn.disabled = true;
         try {
-          await updateDoc(doc(db, "users", u.uid), { darfKreiseAnlegen: !darf });
+          await updateDoc(doc(db, "users", u.uid), { darfKreiseAnlegen: !darf, "adminSperren.orbits": darf });
           await ladeBetrieb();
         } catch (e) {
           $("betriebFehler").textContent = t("eSpeichern", { code: e.code || e.message });
@@ -4538,7 +4719,8 @@ async function ladeBetrieb() {
       zugang.addEventListener("click", async () => {
         zugang.disabled = true;
         try {
-          await updateDoc(doc(db, "users", u.uid), { vollzugriff: u.vollzugriff === false });
+          const voll = u.vollzugriff ?? u.betaVersion !== 17;
+          await updateDoc(doc(db, "users", u.uid), { vollzugriff: !voll, "adminSperren.kalender": voll });
           await ladeBetrieb();
         } catch (e) { $("betriebFehler").textContent = t("eSpeichern", { code: e.code || e.message }); zugang.disabled = false; }
       });

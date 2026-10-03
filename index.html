@@ -14,7 +14,7 @@
   <meta name="theme-color" content="#F6F8FB" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#0D131C" media="(prefers-color-scheme: dark)">
   <meta name="description" content="Orbyx – organize your chaos">
-<link rel="stylesheet" href="ui.css?v=16">
+<link rel="stylesheet" href="ui.css?v=17">
 
 <style>
 /* ===================================================================
@@ -843,6 +843,7 @@ td.n { color: var(--text2); white-space: nowrap; }
     <button class="pfeil" id="vor" data-i18n-al="weiter">&#8250;</button>
   </div>
 
+  <section id="abstimmungen" class="anfragen" aria-live="polite"></section>
   <main id="buehne"></main>
   </div>
   </div>
@@ -922,6 +923,11 @@ td.n { color: var(--text2); white-space: nowrap; }
 
     <label for="fNotiz" data-i18n="fNotiz"></label>
     <textarea id="fNotiz" maxlength="500" data-i18n-ph="fOptional"></textarea>
+    <div id="executorFeld" class="versteckt">
+      <label for="fExecutor" data-i18n="wfExecutor">Ausführende Person dieser Tour</label>
+      <select id="fExecutor"></select>
+      <p class="hinweis" data-i18n="wfExecutorHinweis">Nur die zugewiesene Person wird zusätzlich als beschäftigt reserviert.</p>
+    </div>
 
     <div class="block" id="teilenBlock">
       <label data-i18n="fTeilen"></label>
@@ -1042,9 +1048,10 @@ td.n { color: var(--text2); white-space: nowrap; }
       </div>
       <p class="hinweis" data-i18n="kModusHinweis"></p>
 
-      <div id="eArtZeitFeld">
+      <label class="schalter" id="eArtAlleWahl"><input type="checkbox" id="eArtAlle" checked><span data-i18n="wfRestAlle">Rest an allen Arbeitstagen</span></label>
         <label data-i18n="kArtTage"></label>
         <div class="tageWahl" id="eArtTage"></div>
+      <div id="eArtZeitFeld">
         <div class="reihe" style="margin-top:8px">
           <div><label for="eArtVon" data-i18n="fVon"></label>
                <input type="time" id="eArtVon" value="17:00"></div>
@@ -1058,6 +1065,13 @@ td.n { color: var(--text2); white-space: nowrap; }
       <p class="hinweis" data-i18n="kArtPlaetzeHinweis"></p>
       <label for="eArtProvider" data-i18n="artAnbieter"></label>
       <select id="eArtProvider"></select>
+      <label for="eArtFarbe" data-i18n="wfFarbe">Farbe</label>
+      <input type="color" id="eArtFarbe" value="#818cf8">
+      <label for="eArtBelegung" data-i18n="wfBelegung">Belegung</label>
+      <select id="eArtBelegung">
+        <option value="gemeinsam" data-i18n="wfGemeinsam">Gemeinsamer Termin mit Anbieter</option>
+        <option value="parallel" data-i18n="wfParallel">Unabhängige Touren</option>
+      </select>
       <label for="eArtOrt" data-i18n="fOrt"></label>
       <input type="text" id="eArtOrt" maxlength="120">
 
@@ -1095,6 +1109,13 @@ td.n { color: var(--text2); white-space: nowrap; }
     <label data-i18n="eiTerminarten"></label>
     <p class="hinweis" data-i18n="eiTerminartenHinweis"></p>
     <div id="eTerminarten" class="rechteArten"></div>
+    <label for="ePlanenMit" data-i18n="wfPlanenMit">Darf Termine planen mit</label>
+    <select id="ePlanenMit">
+      <option value="alle" data-i18n="wfAlle">Allen Mitgliedern</option>
+      <option value="verwalter" data-i18n="wfVerwalter">Nur Verwaltern</option>
+      <option value="auswahl" data-i18n="wfAuswahl">Ausgewählten Personen</option>
+    </select>
+    <select id="ePersonenMit" multiple aria-label="Ausgewählte Personen / الأشخاص المحددون"></select>
     <div id="vollzugriffWahl">
       <label class="schalter" for="eVollzugriff">
         <input type="checkbox" id="eVollzugriff" checked><span data-i18n="eiVollzugriff"></span>
@@ -1178,6 +1199,7 @@ td.n { color: var(--text2); white-space: nowrap; }
     <div class="wahl" id="fvDauerWahl"></div>
     <div id="findenFehler" class="fehler"></div>
     <div id="findenErgebnis" style="margin-top:16px;display:flex;flex-direction:column;gap:8px"></div>
+    <button type="button" class="knopf rand" id="findenAufgabe" data-i18n="wfAufgabe">Aufgabe ohne Zeitfenster</button>
     <div class="aktionen">
       <button type="button" class="knopf hell" id="findenZu" data-i18n="schliessen"></button>
       <button type="button" class="knopf" id="findenStart" data-i18n="tfSuchen"></button>
@@ -1267,6 +1289,14 @@ td.n { color: var(--text2); white-space: nowrap; }
     <p class="dlgUnter" data-i18n="bUnter"></p>
 
     <div class="kacheln" id="betriebZahlen"></div>
+    <form id="appEinladen" class="block">
+      <label for="appMail" data-i18n="wfAppEinladung">App-Einladung ohne Orbit</label>
+      <input id="appMail" type="email" required placeholder="name@mail.com">
+      <label class="schalter"><input id="appPrivat" type="checkbox"><span data-i18n="wfPersoenlich">Persönlicher Kalender und Aufgaben</span></label>
+      <label class="schalter"><input id="appOrbits" type="checkbox"><span data-i18n="wfOrbits">Orbits erstellen</span></label>
+      <button class="knopf" type="submit" data-i18n="kEinladen">Einladen</button>
+      <p id="appEinladungMeldung" role="status"></p>
+    </form>
 
     <div class="block">
       <label data-i18n="bKonten"></label>
@@ -1287,6 +1317,6 @@ td.n { color: var(--text2); white-space: nowrap; }
   </div>
 </dialog>
 
-<script type="module" src="startup.js?v=16"></script>
+<script type="module" src="startup.js?v=17"></script>
 </body>
 </html>

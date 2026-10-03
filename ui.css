@@ -132,3 +132,9 @@ body .knopf.rand.gefahr:hover { background: var(--rotHell); }
 body dialog .eintragKopf h2 { margin: 0; flex: 1; min-width: 160px; }
 .eintragKopf .knopf { width: auto; font-size: 13px; padding: 10px 14px; }
 @media (max-width: 480px) { .eintragKopf { top: -18px; } }
+/* Requests remain separate from confirmed calendar reservations. */
+.anfragen { display: grid; gap: 12px; margin-bottom: 16px; }
+.anfragen:empty { display: none; }
+.anfrage { padding: 18px; border: 1px solid var(--linie); border-radius: 18px; background: var(--flaeche); color: var(--text); }
+.anfrage .aktionen { flex-wrap: wrap; }
+#ePersonenMit { min-height: 110px; }
