@@ -24,7 +24,7 @@ const BETREIBER = ["rabea.jabban.mrj@gmail.com"];
 
 /* =================================================================== */
 
-import { collaboration, canMeet, participantsFor } from './collaboration.js?v=17';
+import { collaboration, canMeet, participantsFor } from './collaboration.js?v=18';
 import { initializeApp }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import {
@@ -38,8 +38,8 @@ import {
 
 import {
   SPRACHEN, t, liste, setzeSprache, holeSprache, istRTL, spracheRaten
-} from "./i18n.js?v=17";
-import { sessionKey, lockKeys, claimSeat, releaseSeat, bookingBlocked, BookingError } from "./booking.js?v=17";
+} from "./i18n.js?v=18";
+import { sessionKey, lockKeys, claimSeat, releaseSeat, bookingBlocked, BookingError } from "./booking.js?v=18";
 
 const app  = initializeApp(firebaseConfig);
 const auth = getAuth(app);

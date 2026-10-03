@@ -262,7 +262,7 @@ self.addEventListener('fetch', ev => {
     await page.waitForFunction(() => window.__db.eintraege.group.titel === 'Gemeinsam bearbeitet');
     assert.equal(await page.evaluate(() => window.__db.eintraege.group.ownerId), 'member');
     const sourceId = await page.evaluate(async () => {
-      const m = await import('/app.js?v=17'), k = { id: 'team', ...window.__db.kreise.team }, a = k.arten.find(a => a.name === 'Beratung');
+      const m = await import('/app.js?v=18'), k = { id: 'team', ...window.__db.kreise.team }, a = k.arten.find(a => a.name === 'Beratung');
       return (await m.reserviereTermin(k, '2026-10-05', { von: 600, bis: 660, plaetze: 1, art: a }, 'member', true)).id;
     });
     await page.locator('.miniTag:not(.fremd)').filter({ hasText: /^5$/ }).click();
@@ -275,7 +275,7 @@ self.addEventListener('fetch', ev => {
     assert.equal(await page.evaluate(id => window.__db.eintraege[id].start, sourceId), '10:00', 'the original time remains reserved until the customer agrees');
     await page.evaluate(async id => {
       window.__user.uid = 'member';
-      try { const m = await import('/app.js?v=17'); await m.beantworteAnfrage('service_' + id, 'ja', 1); }
+      try { const m = await import('/app.js?v=18'); await m.beantworteAnfrage('service_' + id, 'ja', 1); }
       finally { window.__user.uid = 'admin'; }
     }, sourceId);
     await page.waitForFunction(id => !window.__db.eintraege[id], sourceId);
@@ -343,7 +343,7 @@ self.addEventListener('fetch', ev => {
     await page.screenshot({ path: path.join(root, 'preview/open-request.png'), fullPage: true, animations: 'disabled' });
     await page.evaluate(async id => {
       window.__user.uid = 'member';
-      try { const m = await import('/app.js?v=17'); await m.beantworteAnfrage(id, 'ja', 1); }
+      try { const m = await import('/app.js?v=18'); await m.beantworteAnfrage(id, 'ja', 1); }
       finally { window.__user.uid = 'admin'; }
     }, requestId);
     assert.equal(await page.evaluate(id => Object.values(window.__db.eintraege).filter(e => e.workflowId === id).length, requestId), 2);
@@ -377,7 +377,7 @@ self.addEventListener('fetch', ev => {
     await visible('#dlgSuchen');
     await page.locator('#suZu').click();
     const bookingResult = await page.evaluate(async () => {
-      const m = await import('/app.js?v=17');
+      const m = await import('/app.js?v=18');
       const firebase = await import('/__firebase.js');
       const k = { id: 'team', ...window.__db.kreise.team };
       const f = { von: 540, bis: 600, plaetze: 1, art: { ...k.arten[0], ort: 'Campus A' } };
@@ -415,7 +415,7 @@ self.addEventListener('fetch', ev => {
       });
       const cachedPage = await cachedContext.newPage();
       const origin = 'http://127.0.0.1:' + server.address().port;
-      await cachedPage.goto(origin + '/?v=17');
+      await cachedPage.goto(origin + '/?v=18');
       await cachedPage.waitForSelector('#sprachwahl button[lang=de]');
       await cachedPage.evaluate(async () => {
         await navigator.serviceWorker.register('/__old-worker.js');
@@ -428,7 +428,7 @@ self.addEventListener('fetch', ev => {
       await cachedPage.waitForFunction(() => navigator.serviceWorker.controller);
       await cachedPage.goto(origin + '/');
       assert.equal(await cachedPage.locator('body').innerText(), 'Alte Ansicht: Ich');
-      await cachedPage.goto(origin + '/?v=17');
+      await cachedPage.goto(origin + '/?v=18');
       await cachedPage.waitForSelector('#sprachwahl button[lang=de]');
       assert.equal(await cachedPage.locator('#eintragLoeschenBtn').count(), 1);
       assert.equal(await cachedPage.locator('#seiteOrbits').count(), 0);

@@ -1,5 +1,5 @@
 // Keep the sign-in screen readable even if the remote Firebase modules fail.
-import { t, setzeSprache, holeSprache, spracheRaten, istRTL } from './i18n.js?v=17';
+import { t, setzeSprache, holeSprache, spracheRaten, istRTL } from './i18n.js?v=18';
 let gespeichert = '';
 try { gespeichert = localStorage.getItem('orbyx.sprache') || ''; } catch {}
 setzeSprache(gespeichert || spracheRaten());
@@ -16,7 +16,7 @@ if (['localhost', '127.0.0.1'].includes(location.hostname)) {
     await Promise.all(names.filter(name => name.startsWith('orbyx-')).map(name => caches.delete(name)));
   } catch (error) { console.warn('Lokale Vorschau aktualisieren:', error); }
 }
-try { await import('./app.js?v=17'); }
+try { await import('./app.js?v=18'); }
 catch (error) {
   document.getElementById('loginFehler').textContent = t('startFehler');
   document.getElementById('loginBtn').disabled = true;

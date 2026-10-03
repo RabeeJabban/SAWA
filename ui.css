@@ -138,3 +138,35 @@ body dialog .eintragKopf h2 { margin: 0; flex: 1; min-width: 160px; }
 .anfrage { padding: 18px; border: 1px solid var(--linie); border-radius: 18px; background: var(--flaeche); color: var(--text); }
 .anfrage .aktionen { flex-wrap: wrap; }
 #ePersonenMit { min-height: 110px; }
+
+/* Keep the calendar close to the top and avoid two bottom spacers on phones. */
+@media (max-width: 599px) {
+  html:root { --stunde: 44px; }
+  #appView .haupt { padding: 8px 12px calc(76px + var(--unten)); }
+  #appView main { padding-block: 4px 0; gap: 6px; }
+  #orbitReiter { padding: 6px 12px 0; }
+  .orbitListe { gap: 6px; padding-bottom: 6px; }
+  .orbitReiter { min-height: 44px; padding: 8px 12px; font-size: 13px; }
+  #appView .planKontext { gap: 8px; margin: 4px 0 8px; }
+  .planIntro h1 { font-size: 22px; margin: 2px 0; letter-spacing: -.5px; }
+  .planIntro p { display: none; }
+  .augenbraue { font-size: 10px; }
+  #appView .planZahlen { gap: 6px; margin-bottom: 8px; }
+  #appView .planZahl { padding: 6px 8px; border-radius: 10px; flex-direction: row; align-items: center; gap: 5px; }
+  #appView .planZahl b { font-size: 18px; }
+  #appView .planZahl span { font-size: 10px; line-height: 1.25; }
+  #appView nav.ansichten button { min-height: 40px; padding-inline: 7px; }
+  #appView .filter { padding-block: 6px 0; }
+  #appView .zeitleiste { padding-block: 8px; }
+  #appView .monat { padding: 6px; border-radius: 12px; }
+  #appView .monatZelle { min-height: 44px; height: 44px; aspect-ratio: auto; gap: 1px; }
+  #appView .monatZelle .streifen { gap: 1px; }
+  #appView .monatZelle .streifen i { height: 3px; }
+  #appView .planRolle { max-height: clamp(240px, calc(100dvh - 310px), 560px); padding-inline: 4px; }
+  #appView .planName { min-height: 38px; padding: 4px 6px; font-size: 12px; }
+  #appView .leer { padding: 18px 12px; }
+  #appView .trenner { margin-top: 10px; }
+  .anfragen { gap: 8px; margin-bottom: 8px; }
+  .anfrage { padding: 12px; border-radius: 12px; }
+  .anfrage p { margin-block: 8px; font-size: 13px; }
+}

@@ -15,7 +15,7 @@
  * weiter die alte Fassung, egal was auf dem Server liegt.
  */
 
-const VERSION = "orbyx-17";
+const VERSION = "orbyx-18";
 const DATEIEN = [
   "./",
   "./index.html",
@@ -23,14 +23,14 @@ const DATEIEN = [
   "./startup.js",
   "./booking.js",
   "./collaboration.js",
-  "./collaboration.js?v=17",
+  "./collaboration.js?v=18",
   "./ui.css",
   "./i18n.js",
-  "./startup.js?v=17",
-  "./app.js?v=17",
-  "./booking.js?v=17",
-  "./ui.css?v=17",
-  "./i18n.js?v=17",
+  "./startup.js?v=18",
+  "./app.js?v=18",
+  "./booking.js?v=18",
+  "./ui.css?v=18",
+  "./i18n.js?v=18",
   "./manifest.webmanifest",
   "./icons/icon-192.png",
   "./icons/icon-512.png",

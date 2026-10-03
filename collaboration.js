@@ -1,4 +1,4 @@
-import { lockKeys, BookingError } from './booking.js?v=17';
+import { lockKeys, BookingError } from './booking.js?v=18';
 
 export function participantsFor(circle, uid) {
   const rule = circle.rechte?.[uid] || {};
