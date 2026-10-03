@@ -1,8 +1,8 @@
-# Orbyx – lokale Version 18
+# Orbyx – lokale Version 20
 
 Kalender- und Aufgaben-App mit Google-Anmeldung und Firebase Firestore. Unterstützt Deutsch, Arabisch, helle und dunkle Darstellung sowie Smartphone und Desktop.
 
-Version 18 verkleinert die Handyansicht: kompakte Orbit-Reiter und Kennzahlen, flachere Monatsfelder, kleinere Stundenhöhe und keine doppelten Abstände unter dem Plan. Push-Benachrichtigungen bei geschlossener App sind noch nicht eingerichtet. Diese Überarbeitung ist lokal vorbereitet und getestet. Sie wurde hier nicht auf GitHub oder Firebase veröffentlicht. Die bisherige Veröffentlichung verwendete Version 16. Firebase-Projekt: `orbyx-8d73c`. Die bereits übertragenen 3 Benutzerkonten und 79 Dokumente werden nicht neu importiert.
+Version 20 setzt die Orbit-Auswahl in dieselbe feste Kopfzeile wie Logo und Profil. Auf kleinen Bildschirmen zeigt das Logo nur das Symbol; die Orbit-Reiter sind seitlich scrollbar. Die Wochenansicht zeigt die sieben Wochentage auf dem Handy als Liste ohne seitliches Scrollen. Ein Tippen auf die Tagesüberschrift öffnet den Tagesplan. Freie Service-Zeiten sind pro Tag ausklappbar und buchbar. Das Raster bleibt am Computer erhalten. Die Handyansicht bietet außerdem: kompakte Orbit-Reiter und Kennzahlen, flachere Monatsfelder, kleinere Stundenhöhe und keine doppelten Abstände unter dem Plan. Push-Benachrichtigungen bei geschlossener App sind noch nicht eingerichtet. Diese Überarbeitung ist lokal vorbereitet und getestet. Sie wurde hier nicht auf GitHub oder Firebase veröffentlicht. Die bisherige Veröffentlichung verwendete Version 16. Firebase-Projekt: `orbyx-8d73c`. Die bereits übertragenen 3 Benutzerkonten und 79 Dokumente werden nicht neu importiert.
 
 ## Vereinbarte Funktionen
 
@@ -20,7 +20,7 @@ Die vollständige Beschreibung steht in [ABGESTIMMTE-LOGIK.md](ABGESTIMMTE-LOGIK
 
 ## Start und Veröffentlichung
 
-Mit Node.js: `node tools/serve.cjs`, anschließend `http://localhost:4173/?v=18` öffnen. Die Firebase-Module werden vom Google-CDN geladen. Google-Anmeldung benötigt eine autorisierte Domain im Firebase-Projekt.
+Mit Node.js: `node tools/serve.cjs`, anschließend `http://localhost:4173/?v=20` öffnen. Die Firebase-Module werden vom Google-CDN geladen. Google-Anmeldung benötigt eine autorisierte Domain im Firebase-Projekt.
 
 Den Inhalt von `Orbyx-GitHub-Update.zip` zunächst in die vorhandene GitHub-Branch **entwicklung** hochladen. `index.html` muss direkt im Repository liegen. Details: [GITHUB-DATEIEN.md](GITHUB-DATEIEN.md).
 

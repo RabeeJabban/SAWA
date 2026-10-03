@@ -24,7 +24,7 @@ const BETREIBER = ["rabea.jabban.mrj@gmail.com"];
 
 /* =================================================================== */
 
-import { collaboration, canMeet, participantsFor } from './collaboration.js?v=18';
+import { collaboration, canMeet, participantsFor } from './collaboration.js?v=20';
 import { initializeApp }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import {
@@ -38,8 +38,8 @@ import {
 
 import {
   SPRACHEN, t, liste, setzeSprache, holeSprache, istRTL, spracheRaten
-} from "./i18n.js?v=18";
-import { sessionKey, lockKeys, claimSeat, releaseSeat, bookingBlocked, BookingError } from "./booking.js?v=18";
+} from "./i18n.js?v=20";
+import { sessionKey, lockKeys, claimSeat, releaseSeat, bookingBlocked, BookingError } from "./booking.js?v=20";
 
 const app  = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -1974,6 +1974,14 @@ function kreisWahlLeiste() {
   };
   if (!nurBuchen()) mach("", t("planIch"));
   meineKreise.forEach((k) => mach(k.id, k.name));
+  requestAnimationFrame(() => {
+    if (!z.isConnected) return;
+    const aktiv = z.querySelector('[aria-selected="true"]');
+    if (!aktiv) return;
+    const sicht = z.getBoundingClientRect(), tab = aktiv.getBoundingClientRect();
+    if (tab.right > sicht.right) z.scrollLeft += tab.right - sicht.right + 3;
+    else if (tab.left < sicht.left) z.scrollLeft -= sicht.left - tab.left + 3;
+  });
   return z;
 }
 
@@ -2441,6 +2449,41 @@ function maleWoche(box) {
   const kreis = kreisVon(planKreis);
   const tage = [];
   for (let i = 0; i < 7; i++) tage.push(plus(mo, i));
+
+  if (window.matchMedia('(max-width: 599px)').matches) {
+    const listeWoche = el('div', 'mobileWoche');
+    tage.forEach(tag => {
+      const abschnitt = el('section', 'wochenTag' + (tag === heute() ? ' heute' : ''));
+      const kopf = el('button', 'wochenTagKopf', langDatum(tag));
+      kopf.type = 'button';
+      kopf.addEventListener('click', () => {
+        anker = tag; ansicht = 'tag'; merke('ansicht', 'tag');
+        [...$('nav').children].forEach(x => x.classList.toggle('an', x.dataset.v === 'tag'));
+        zeichne();
+      });
+      abschnitt.appendChild(kopf);
+      const termine = sortiert(anTag(tag).filter(passtZumPlan));
+      termine.forEach(e => abschnitt.appendChild(zeile(e, tag)));
+      const frei = kreis && filter !== 'task' ? fensterFuer(kreis, tag).filter(f =>
+        darfTerminart(kreis, f.art) && freiePlaetze(f, slots.filter(s => s.kreisId === kreis.id && s.datum === tag)) > 0 && !zeitKonflikt(kreis, tag, f)) : [];
+      if (frei.length) {
+        const details = el('details', 'wochenFreieZeiten');
+        const summary = el('summary', null, textNeu(`Freie Zeiten (${frei.length})`, `الأوقات المتاحة (${frei.length})`));
+        details.appendChild(summary);
+        frei.forEach(f => {
+          const knopf = el('button', 'wochenZeit'); knopf.type = 'button';
+          knopf.append(el('b', 'ltr', ausMinuten(f.von) + '–' + ausMinuten(f.bis)), el('span', null, f.art.name));
+          knopf.addEventListener('click', () => darfPlanen(kreis) ? oeffneZuteilen(kreis, tag, f) : buchen(kreis, tag, f));
+          details.appendChild(knopf);
+        });
+        abschnitt.appendChild(details);
+      }
+      if (!termine.length && !frei.length) abschnitt.appendChild(el('p', 'wochenLeer', t('nichtsGeplant')));
+      listeWoche.appendChild(abschnitt);
+    });
+    box.appendChild(listeWoche);
+    return;
+  }
 
   const jeTag = new Map(), alle = [];
   const ohne = [];

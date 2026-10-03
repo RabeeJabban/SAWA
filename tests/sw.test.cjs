@@ -15,7 +15,7 @@ function worker({ cached, offline = false, installFails = false } = {}) {
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../sw.js'), 'utf8'), {
     URL, Response,
     fetch: async () => { if (offline) throw new Error('offline'); return new Response('fresh'); },
-    caches: { open: async () => cache, keys: async () => ['orbyx-10', 'orbyx-15', 'orbyx-18', 'other-app'], delete: async n => deleted.push(n) },
+    caches: { open: async () => cache, keys: async () => ['orbyx-10', 'orbyx-15', 'orbyx-20', 'other-app'], delete: async n => deleted.push(n) },
     self: { location: { origin: 'https://example.com' }, registration: { scope: 'https://example.com/orbyx/' },
       addEventListener: (name, fn) => handlers[name] = fn,
       skipWaiting: async () => { skipped = true; }, clients: { claim: async () => {} } }

@@ -138,6 +138,32 @@ body dialog .eintragKopf h2 { margin: 0; flex: 1; min-width: 160px; }
 .anfrage { padding: 18px; border: 1px solid var(--linie); border-radius: 18px; background: var(--flaeche); color: var(--text); }
 .anfrage .aktionen { flex-wrap: wrap; }
 #ePersonenMit { min-height: 110px; }
+.mobileWoche { display: grid; gap: 8px; min-width: 0; }
+.wochenTag { min-width: 0; border: 1px solid var(--linie); border-radius: 12px; background: var(--flaeche); padding: 10px; }
+.wochenTag.heute { border-color: var(--akzent); }
+.wochenTagKopf { width: 100%; min-height: 44px; text-align: start; padding: 4px 2px; border: 0; background: none; color: var(--text); font-size: 14px; font-weight: 650; }
+.wochenTag .eintrag { margin-block: 4px; }
+.wochenLeer { color: var(--text3); font-size: 12px; margin: 2px 2px 6px; }
+.wochenFreieZeiten summary { min-height: 44px; padding: 12px 2px; cursor: pointer; color: var(--akzent); font-size: 13px; }
+.wochenZeit { display: flex; flex-wrap: wrap; gap: 8px; width: 100%; min-height: 44px; padding: 10px; margin-block: 4px; border: 1px dashed var(--linie2); border-radius: 10px; background: var(--flaeche2); color: var(--text); text-align: start; }
+.wochenZeit span { overflow-wrap: anywhere; }
+
+/* Orbit switching belongs to the sticky header, beside logo and account. */
+#appView header .marke { flex: 0 0 auto; }
+#appView header #orbitReiter { flex: 1 1 0; min-width: 0; max-width: none; margin: 0; padding: 0; }
+#appView header .orbitListe { padding: 3px; gap: 6px; scrollbar-width: none; }
+#appView header .orbitListe::-webkit-scrollbar { display: none; }
+#appView header .orbitReiter { min-height: 42px; padding: 8px 12px; }
+#appView header .rundknopf:not(#michBtn)::after { content: none; }
+#appView header .rundknopf:not(#michBtn) { width: 42px; padding: 0; }
+@media (max-width: 599px) {
+  #appView header { gap: 4px; padding: 8px; }
+  #appView header .marke { padding: 0; }
+  #appView header .marke b { display: none; }
+  #appView header .marke svg { width: 26px; height: 26px; }
+  #appView header .rundknopf, #appView header .rundknopf:not(#michBtn) { width: 34px; height: 40px; border-radius: 10px; }
+  #appView header .orbitReiter { min-height: 40px; font-size: 12px; padding: 7px 9px; gap: 5px; }
+}
 
 /* Keep the calendar close to the top and avoid two bottom spacers on phones. */
 @media (max-width: 599px) {
